@@ -23,7 +23,9 @@ config :explorer,
       else: Explorer.Chain.Events.DBSender
     )
 
-config :explorer, Explorer.Counters.AverageBlockTime, enabled: true
+config :explorer, Explorer.Counters.AverageBlockTime,
+  enabled: true,
+  period: :timer.minutes(10)
 
 config :explorer, Explorer.Chain.Events.Listener,
   enabled:
@@ -104,6 +106,18 @@ config :explorer, Explorer.Counters.AddressTransactionsCounter,
   enabled: true,
   enable_consolidation: true
 
+config :explorer, Explorer.Counters.AddressTokenTransfersCounter,
+  enabled: true,
+  enable_consolidation: true
+
+config :explorer, Explorer.Counters.BlockBurnedFeeCounter,
+  enabled: true,
+  enable_consolidation: true
+
+config :explorer, Explorer.Counters.BlockPriorityFeeCounter,
+  enabled: true,
+  enable_consolidation: true
+
 bridge_market_cap_update_interval =
   if System.get_env("BRIDGE_MARKET_CAP_UPDATE_INTERVAL") do
     case Integer.parse(System.get_env("BRIDGE_MARKET_CAP_UPDATE_INTERVAL")) do
@@ -115,7 +129,8 @@ bridge_market_cap_update_interval =
 config :explorer, Explorer.Counters.Bridge,
   enabled: if(System.get_env("SUPPLY_MODULE") === "TokenBridge", do: true, else: false),
   enable_consolidation: System.get_env("DISABLE_BRIDGE_MARKET_CAP_UPDATER") !== "true",
-  update_interval_in_seconds: bridge_market_cap_update_interval || 30 * 60
+  update_interval_in_seconds: bridge_market_cap_update_interval || 30 * 60,
+  disable_lp_tokens_in_market_cap: System.get_env("DISABLE_LP_TOKENS_IN_MARKET_CAP") == "true"
 
 config :explorer, Explorer.ExchangeRates, enabled: System.get_env("DISABLE_EXCHANGE_RATES") != "true", store: :ets
 
@@ -225,18 +240,17 @@ config :explorer, Explorer.Chain.Cache.Accounts,
   ttl_check_interval: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(1), else: false),
   global_ttl: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(5))
 
-config :explorer, Explorer.Chain.Cache.PendingTransactions,
-  enabled:
-    if(System.get_env("ETHEREUM_JSONRPC_VARIANT") == "besu",
-      do: false,
-      else: true
-    ),
-  ttl_check_interval: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(1), else: false),
-  global_ttl: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(5))
-
 config :explorer, Explorer.Chain.Cache.Uncles,
   ttl_check_interval: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(1), else: false),
   global_ttl: if(System.get_env("DISABLE_INDEXER") == "true", do: :timer.seconds(5))
+
+config :explorer, Explorer.Chain.Cache.GasUsage, enabled: false
+
+config :explorer, Explorer.ThirdPartyIntegrations.Sourcify,
+  server_url: System.get_env("SOURCIFY_SERVER_URL") || "https://sourcify.dev/server",
+  enabled: System.get_env("ENABLE_SOURCIFY_INTEGRATION") == "true",
+  chain_id: System.get_env("CHAIN_ID"),
+  repo_url: System.get_env("SOURCIFY_REPO_URL") || "https://repo.sourcify.dev/contracts"
 
 # Import environment specific config. This must remain at the bottom
 # of this file so it overrides the configuration defined above.

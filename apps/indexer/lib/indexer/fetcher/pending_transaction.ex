@@ -135,6 +135,21 @@ defmodule Indexer.Fetcher.PendingTransaction do
         Logger.error("timeout")
 
         :ok
+
+      {:error, :etimedout} ->
+        Logger.error("timeout")
+
+        :ok
+
+      {:error, :econnrefused} ->
+        Logger.error("connection_refused")
+
+        :ok
+
+      {:error, {:bad_gateway, _}} ->
+        Logger.error("bad_gateway")
+
+        :ok
     end
   end
 

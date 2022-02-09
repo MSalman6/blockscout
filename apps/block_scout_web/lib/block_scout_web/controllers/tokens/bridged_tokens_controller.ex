@@ -3,7 +3,7 @@ defmodule BlockScoutWeb.BridgedTokensController do
 
   import BlockScoutWeb.Chain, only: [paging_options: 1, next_page_params: 3, split_list_by_page: 1]
 
-  alias BlockScoutWeb.BridgedTokensView
+  alias BlockScoutWeb.{BridgedTokensView, Controller}
   alias Explorer.Chain
   alias Phoenix.View
 
@@ -16,24 +16,20 @@ defmodule BlockScoutWeb.BridgedTokensController do
   end
 
   def show(conn, %{"id" => "eth"}) do
-    total_supply = Chain.total_supply()
-
     render(conn, "index.html",
-      current_path: current_path(conn),
-      total_supply: total_supply,
+      current_path: Controller.current_full_path(conn),
       chain: "Ethereum",
-      chain_id: 1
+      chain_id: 1,
+      destination: :eth
     )
   end
 
   def show(conn, %{"id" => "bsc"}) do
-    total_supply = Chain.total_supply()
-
     render(conn, "index.html",
-      current_path: current_path(conn),
-      total_supply: total_supply,
+      current_path: Controller.current_full_path(conn),
       chain: "Binance Smart Chain",
-      chain_id: 56
+      chain_id: 56,
+      destination: :bsc
     )
   end
 
@@ -46,13 +42,11 @@ defmodule BlockScoutWeb.BridgedTokensController do
   end
 
   def index(conn, _params) do
-    total_supply = Chain.total_supply()
-
     render(conn, "index.html",
-      current_path: current_path(conn),
-      total_supply: total_supply,
+      current_path: Controller.current_full_path(conn),
       chain: "Ethereum",
-      chain_id: 1
+      chain_id: 1,
+      destination: :eth
     )
   end
 
@@ -68,7 +62,8 @@ defmodule BlockScoutWeb.BridgedTokensController do
       params
       |> paging_options()
 
-    tokens = Chain.list_top_bridged_tokens(destination, filter, paging_params)
+    from_api = false
+    tokens = Chain.list_top_bridged_tokens(destination, filter, from_api, paging_params)
 
     {tokens_page, next_page} = split_list_by_page(tokens)
 
@@ -105,6 +100,7 @@ defmodule BlockScoutWeb.BridgedTokensController do
           "_tile.html",
           token: token,
           bridged_token: bridged_token,
+          destination: destination,
           index: items_count + index
         )
       end)
