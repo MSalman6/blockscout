@@ -3,7 +3,7 @@ defmodule BlockScoutWeb.API.V1.VerifiedSmartContractController do
 
   alias Explorer.Chain
   alias Explorer.Chain.Hash.Address
-  alias Explorer.SmartContract.Publisher
+  alias Explorer.SmartContract.Solidity.Publisher
 
   def create(conn, params) do
     with {:ok, hash} <- validate_address_hash(params["address_hash"]),
@@ -52,7 +52,10 @@ defmodule BlockScoutWeb.API.V1.VerifiedSmartContractController do
   end
 
   defp fetch_external_libraries(params) do
-    keys = Enum.flat_map(1..10, fn i -> ["library#{i}_name", "library#{i}_address"] end)
+    keys =
+      Enum.flat_map(1..Application.get_env(:block_scout_web, :contract)[:verification_max_libraries], fn i ->
+        ["library#{i}_name", "library#{i}_address"]
+      end)
 
     Map.take(params, keys)
   end

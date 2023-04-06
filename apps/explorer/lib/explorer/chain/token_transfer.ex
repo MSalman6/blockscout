@@ -25,8 +25,9 @@ defmodule Explorer.Chain.TokenTransfer do
   use Explorer.Schema
 
   import Ecto.Changeset
-  import Ecto.Query, only: [from: 2, limit: 2, where: 3]
+  import Ecto.Query, only: [from: 2, limit: 2, where: 3, join: 5, order_by: 3, preload: 3]
 
+  alias Explorer.Chain
   alias Explorer.Chain.{Address, Block, Hash, TokenTransfer, Transaction}
   alias Explorer.Chain.Token.Instance
   alias Explorer.{PagingOptions, Repo}
@@ -47,9 +48,11 @@ defmodule Explorer.Chain.TokenTransfer do
   * `:transaction` - The `t:Explorer.Chain.Transaction.t/0` ledger
   * `:transaction_hash` - Transaction foreign key
   * `:log_index` - Index of the corresponding `t:Explorer.Chain.Log.t/0` in the transaction.
+  * `:amounts` - Tokens transferred amounts in case of batched transfer in ERC-1155
+  * `:token_ids` - IDs of the tokens (applicable to ERC-1155 tokens)
   """
   @type t :: %TokenTransfer{
-          amount: Decimal.t(),
+          amount: Decimal.t() | nil,
           block_number: non_neg_integer() | nil,
           block_hash: Hash.Full.t(),
           from_address: %Ecto.Association.NotLoaded{} | Address.t(),
@@ -61,12 +64,18 @@ defmodule Explorer.Chain.TokenTransfer do
           token_id: non_neg_integer() | nil,
           transaction: %Ecto.Association.NotLoaded{} | Transaction.t(),
           transaction_hash: Hash.Full.t(),
-          log_index: non_neg_integer()
+          log_index: non_neg_integer(),
+          amounts: [Decimal.t()] | nil,
+          token_ids: [non_neg_integer()] | nil,
+          index_in_batch: non_neg_integer() | nil
         }
 
   @typep paging_options :: {:paging_options, PagingOptions.t()}
+  @typep api? :: {:api?, true | false}
 
   @constant "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef"
+  @erc1155_single_transfer_signature "0xc3d58168c5ae7397731d063d5bbf3d657854427343f4c083240f7aacaa2d0f62"
+  @erc1155_batch_transfer_signature "0x4a39dc06d4c0dbc64b70af90fd698a233a518aa5d07e595d983b8c0526c8f7fb"
 
   @transfer_function_signature "0xa9059cbb"
 
@@ -76,6 +85,9 @@ defmodule Explorer.Chain.TokenTransfer do
     field(:block_number, :integer)
     field(:log_index, :integer, primary_key: true)
     field(:token_id, :decimal)
+    field(:amounts, {:array, :decimal})
+    field(:token_ids, {:array, :decimal})
+    field(:index_in_batch, :integer, virtual: true)
 
     belongs_to(:from_address, Address, foreign_key: :from_address_hash, references: :hash, type: Hash.Address)
     belongs_to(:to_address, Address, foreign_key: :to_address_hash, references: :hash, type: Hash.Address)
@@ -102,8 +114,8 @@ defmodule Explorer.Chain.TokenTransfer do
       type: Hash.Full
     )
 
-    has_one(
-      :instance,
+    has_many(
+      :instances,
       Instance,
       foreign_key: :token_contract_address_hash,
       references: :token_contract_address_hash
@@ -115,7 +127,7 @@ defmodule Explorer.Chain.TokenTransfer do
   end
 
   @required_attrs ~w(block_number log_index from_address_hash to_address_hash token_contract_address_hash transaction_hash block_hash)a
-  @optional_attrs ~w(amount token_id)a
+  @optional_attrs ~w(amount token_id amounts token_ids)a
 
   @doc false
   def changeset(%TokenTransfer{} = struct, params \\ %{}) do
@@ -134,12 +146,16 @@ defmodule Explorer.Chain.TokenTransfer do
   """
   def constant, do: @constant
 
+  def erc1155_single_transfer_signature, do: @erc1155_single_transfer_signature
+
+  def erc1155_batch_transfer_signature, do: @erc1155_batch_transfer_signature
+
   @doc """
   ERC 20's transfer(address,uint256) function signature
   """
   def transfer_function_signature, do: @transfer_function_signature
 
-  @spec fetch_token_transfers_from_token_hash(Hash.t(), [paging_options]) :: []
+  @spec fetch_token_transfers_from_token_hash(Hash.t(), [paging_options | api?]) :: []
   def fetch_token_transfers_from_token_hash(token_address_hash, options) do
     paging_options = Keyword.get(options, :paging_options, @default_paging_options)
 
@@ -148,16 +164,16 @@ defmodule Explorer.Chain.TokenTransfer do
         tt in TokenTransfer,
         where: tt.token_contract_address_hash == ^token_address_hash and not is_nil(tt.block_number),
         preload: [{:transaction, :block}, :token, :from_address, :to_address],
-        order_by: [desc: tt.block_number]
+        order_by: [desc: tt.block_number, desc: tt.log_index]
       )
 
     query
     |> page_token_transfer(paging_options)
     |> limit(^paging_options.page_size)
-    |> Repo.all()
+    |> Chain.select_repo(options).all()
   end
 
-  @spec fetch_token_transfers_from_token_hash_and_token_id(Hash.t(), binary(), [paging_options]) :: []
+  @spec fetch_token_transfers_from_token_hash_and_token_id(Hash.t(), non_neg_integer(), [paging_options | api?]) :: []
   def fetch_token_transfers_from_token_hash_and_token_id(token_address_hash, token_id, options) do
     paging_options = Keyword.get(options, :paging_options, @default_paging_options)
 
@@ -165,16 +181,16 @@ defmodule Explorer.Chain.TokenTransfer do
       from(
         tt in TokenTransfer,
         where: tt.token_contract_address_hash == ^token_address_hash,
-        where: tt.token_id == ^token_id,
+        where: fragment("? @> ARRAY[?::decimal]", tt.token_ids, ^Decimal.new(token_id)),
         where: not is_nil(tt.block_number),
         preload: [{:transaction, :block}, :token, :from_address, :to_address],
-        order_by: [desc: tt.block_number]
+        order_by: [desc: tt.block_number, desc: tt.log_index]
       )
 
     query
     |> page_token_transfer(paging_options)
     |> limit(^paging_options.page_size)
-    |> Repo.all()
+    |> Chain.select_repo(options).all()
   end
 
   @spec count_token_transfers_from_token_hash(Hash.t()) :: non_neg_integer()
@@ -189,22 +205,36 @@ defmodule Explorer.Chain.TokenTransfer do
     Repo.one(query, timeout: :infinity)
   end
 
-  @spec count_token_transfers_from_token_hash_and_token_id(Hash.t(), binary()) :: non_neg_integer()
-  def count_token_transfers_from_token_hash_and_token_id(token_address_hash, token_id) do
+  @spec count_token_transfers_from_token_hash_and_token_id(Hash.t(), non_neg_integer(), [api?]) :: non_neg_integer()
+  def count_token_transfers_from_token_hash_and_token_id(token_address_hash, token_id, options) do
     query =
       from(
         tt in TokenTransfer,
-        where: tt.token_contract_address_hash == ^token_address_hash and tt.token_id == ^token_id,
+        where:
+          tt.token_contract_address_hash == ^token_address_hash and
+            fragment("? @> ARRAY[?::decimal]", tt.token_ids, ^Decimal.new(token_id)),
         select: fragment("COUNT(*)")
       )
 
-    Repo.one(query, timeout: :infinity)
+    Chain.select_repo(options).one(query, timeout: :infinity)
   end
 
   def page_token_transfer(query, %PagingOptions{key: nil}), do: query
 
+  def page_token_transfer(query, %PagingOptions{key: {token_id}, asc_order: true}) do
+    where(query, [tt], fragment("?[1] > ?", tt.token_ids, ^token_id))
+  end
+
   def page_token_transfer(query, %PagingOptions{key: {token_id}}) do
-    where(query, [tt], tt.token_id < ^token_id)
+    where(query, [tt], fragment("?[1] < ?", tt.token_ids, ^token_id))
+  end
+
+  def page_token_transfer(query, %PagingOptions{key: {block_number, log_index}, asc_order: true}) do
+    where(
+      query,
+      [tt],
+      tt.block_number > ^block_number or (tt.block_number == ^block_number and tt.log_index > ^log_index)
+    )
   end
 
   def page_token_transfer(query, %PagingOptions{key: {block_number, log_index}}) do
@@ -213,6 +243,16 @@ defmodule Explorer.Chain.TokenTransfer do
       [tt],
       tt.block_number < ^block_number or (tt.block_number == ^block_number and tt.log_index < ^log_index)
     )
+  end
+
+  def handle_paging_options(query, nil), do: query
+
+  def handle_paging_options(query, %PagingOptions{key: nil, page_size: nil}), do: query
+
+  def handle_paging_options(query, paging_options) do
+    query
+    |> page_token_transfer(paging_options)
+    |> limit(^paging_options.page_size)
   end
 
   @doc """
@@ -279,25 +319,42 @@ defmodule Explorer.Chain.TokenTransfer do
     )
   end
 
-  @doc """
-  Innventory tab query.
-  A token ERC-721 is considered unique because it corresponds to the possession
-  of a specific asset.
-
-  To find out its current owner, it is necessary to look at the token last
-  transfer.
-  """
-  @spec address_to_unique_tokens(Hash.Address.t()) :: %Ecto.Query{}
-  def address_to_unique_tokens(contract_address_hash) do
-    from(
-      tt in TokenTransfer,
-      left_join: instance in Instance,
-      on: tt.token_contract_address_hash == instance.token_contract_address_hash and tt.token_id == instance.token_id,
-      where: tt.token_contract_address_hash == ^contract_address_hash,
-      order_by: [desc: tt.block_number],
-      distinct: [desc: tt.token_id],
-      preload: [:to_address],
-      select: %{tt | instance: instance}
-    )
+  def token_transfers_by_address_hash_and_token_address_hash(address_hash, token_address_hash) do
+    TokenTransfer
+    |> where([tt], tt.from_address_hash == ^address_hash or tt.to_address_hash == ^address_hash)
+    |> where([tt], tt.token_contract_address_hash == ^token_address_hash)
+    |> order_by([tt], desc: tt.block_number, desc: tt.log_index)
   end
+
+  def token_transfers_by_address_hash(direction, address_hash, token_types) do
+    TokenTransfer
+    |> filter_by_direction(direction, address_hash)
+    |> order_by([tt], desc: tt.block_number, desc: tt.log_index)
+    |> join(:inner, [tt], token in assoc(tt, :token), as: :token)
+    |> preload([token: token], [{:token, token}])
+    |> filter_by_type(token_types)
+  end
+
+  def filter_by_direction(query, :to, address_hash) do
+    query
+    |> where([tt], tt.to_address_hash == ^address_hash)
+  end
+
+  def filter_by_direction(query, :from, address_hash) do
+    query
+    |> where([tt], tt.from_address_hash == ^address_hash)
+  end
+
+  def filter_by_direction(query, _, address_hash) do
+    query
+    |> where([tt], tt.from_address_hash == ^address_hash or tt.to_address_hash == ^address_hash)
+  end
+
+  def filter_by_type(query, []), do: query
+
+  def filter_by_type(query, token_types) when is_list(token_types) do
+    where(query, [token: token], token.type in ^token_types)
+  end
+
+  def filter_by_type(query, _), do: query
 end

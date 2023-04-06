@@ -6,6 +6,8 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
   alias Explorer.Chain.{Address, Hash}
   alias Explorer.Factory
 
+  setup :set_mox_from_context
+
   setup :verify_on_exit!
 
   describe "GET index/3" do
@@ -33,7 +35,7 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
     end
 
     test "only responds to ajax requests", %{conn: conn} do
-      smart_contract = insert(:smart_contract)
+      smart_contract = insert(:smart_contract, contract_code_md5: "123")
 
       path = smart_contract_path(BlockScoutWeb.Endpoint, :index, hash: smart_contract.address_hash)
 
@@ -45,7 +47,7 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
     test "lists the smart contract read only functions" do
       token_contract_address = insert(:contract_address)
 
-      insert(:smart_contract, address_hash: token_contract_address.hash)
+      insert(:smart_contract, address_hash: token_contract_address.hash, contract_code_md5: "123")
 
       blockchain_get_function_mock()
 
@@ -80,7 +82,8 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
             "inputs" => [],
             "constant" => true
           }
-        ]
+        ],
+        contract_code_md5: "123"
       )
 
       path =
@@ -114,7 +117,8 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
             "inputs" => [],
             "constant" => false
           }
-        ]
+        ],
+        contract_code_md5: "123"
       )
 
       blockchain_get_implementation_mock()
@@ -150,7 +154,8 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
             "inputs" => [],
             "constant" => false
           }
-        ]
+        ],
+        contract_code_md5: "123"
       )
 
       blockchain_get_implementation_mock_2()
@@ -212,7 +217,7 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
     end
 
     test "only responds to ajax requests", %{conn: conn} do
-      smart_contract = insert(:smart_contract)
+      smart_contract = insert(:smart_contract, contract_code_md5: "123")
 
       path =
         smart_contract_path(
@@ -230,9 +235,7 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
 
     test "fetch the function value from the blockchain" do
       address = insert(:contract_address)
-      smart_contract = insert(:smart_contract, address_hash: address.hash)
-
-      get_eip1967_implementation()
+      smart_contract = insert(:smart_contract, address_hash: address.hash, contract_code_md5: "123")
 
       blockchain_get_function_mock()
 
@@ -243,6 +246,7 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
           Address.checksum(smart_contract.address_hash),
           function_name: "get",
           method_id: "6d4ce63c",
+          args_count: 0,
           args: []
         )
 
@@ -292,16 +296,41 @@ defmodule BlockScoutWeb.SmartContractControllerTest do
   end
 
   def get_eip1967_implementation do
-    expect(EthereumJSONRPC.Mox, :json_rpc, fn %{
-                                                id: 0,
-                                                method: "eth_getStorageAt",
-                                                params: [
-                                                  _,
-                                                  "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
-                                                  "latest"
-                                                ]
-                                              },
-                                              _options ->
+    EthereumJSONRPC.Mox
+    |> expect(:json_rpc, fn %{
+                              id: 0,
+                              method: "eth_getStorageAt",
+                              params: [
+                                _,
+                                "0x360894a13ba1a3210667c828492db98dca3e2076cc3735a920a3ca505d382bbc",
+                                "latest"
+                              ]
+                            },
+                            _options ->
+      {:ok, "0x0000000000000000000000000000000000000000000000000000000000000000"}
+    end)
+    |> expect(:json_rpc, fn %{
+                              id: 0,
+                              method: "eth_getStorageAt",
+                              params: [
+                                _,
+                                "0xa3f0ad74e5423aebfd80d3ef4346578335a9a72aeaee59ff6cb3582b35133d50",
+                                "latest"
+                              ]
+                            },
+                            _options ->
+      {:ok, "0x0000000000000000000000000000000000000000000000000000000000000000"}
+    end)
+    |> expect(:json_rpc, fn %{
+                              id: 0,
+                              method: "eth_getStorageAt",
+                              params: [
+                                _,
+                                "0x7050c9e0f4ca769c69bd3a8ef740bc37934f8e2c036e5a723fd8ee048ed3f8c3",
+                                "latest"
+                              ]
+                            },
+                            _options ->
       {:ok, "0x0000000000000000000000000000000000000000000000000000000000000000"}
     end)
   end

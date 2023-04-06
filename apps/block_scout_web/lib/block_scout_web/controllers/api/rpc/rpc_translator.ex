@@ -18,16 +18,22 @@ defmodule BlockScoutWeb.API.RPC.RPCTranslator do
   import Plug.Conn
   import Phoenix.Controller, only: [put_view: 2]
 
+  alias BlockScoutWeb.AccessHelper
+  alias BlockScoutWeb.API.APILogger
   alias BlockScoutWeb.API.RPC.RPCView
   alias Phoenix.Controller
   alias Plug.Conn
 
-  def init(opts), do: opts
+  def init(opts) do
+    opts
+  end
 
   def call(%Conn{params: %{"module" => module, "action" => action}} = conn, translations) do
-    with {:ok, {controller, write_actions}} <- translate_module(translations, module),
+    with true <- valid_api_request_path(conn),
+         {:ok, {controller, write_actions}} <- translate_module(translations, module),
          {:ok, action} <- translate_action(action),
          true <- action_accessed?(action, write_actions),
+         :ok <- AccessHelper.check_rate_limit(conn),
          {:ok, conn} <- call_controller(conn, controller, action) do
       conn
     else
@@ -39,13 +45,18 @@ defmodule BlockScoutWeb.API.RPC.RPCTranslator do
         |> halt()
 
       {:error, error} ->
-        Logger.error(fn -> ["Error while calling RPC action", inspect(error)] end)
+        APILogger.error(fn ->
+          ["Error while calling RPC action", inspect(error, limit: :infinity, printable_limit: :infinity)]
+        end)
 
         conn
         |> put_status(500)
         |> put_view(RPCView)
         |> Controller.render(:error, error: "Something went wrong.")
         |> halt()
+
+      :rate_limit_reached ->
+        AccessHelper.handle_rate_limit_deny(conn)
 
       _ ->
         conn
@@ -105,5 +116,13 @@ defmodule BlockScoutWeb.API.RPC.RPCTranslator do
   rescue
     e ->
       {:error, Exception.format(:error, e, __STACKTRACE__)}
+  end
+
+  defp valid_api_request_path(conn) do
+    if conn.request_path == "/api" || conn.request_path == "/api/v1" do
+      true
+    else
+      false
+    end
   end
 end

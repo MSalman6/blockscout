@@ -8,19 +8,19 @@ defmodule Explorer.History.ProcessTest do
 
   setup do
     Application.put_env(:explorer, TestHistorian,
-      init_lag: 0,
+      init_lag_milliseconds: 0,
       days_to_compile_at_init: nil
     )
   end
 
   describe "init/1" do
-    test "sends compile_historical_records with no init_lag" do
+    test "sends compile_historical_records with no init_lag_milliseconds" do
       assert {:ok, %{:historian => TestHistorian}} = HistoryProcess.init([:ok, TestHistorian])
       assert_receive {:compile_historical_records, 365}
     end
 
-    test "sends compile_historical_records after some init_lag" do
-      Application.put_env(:explorer, TestHistorian, init_lag: 200)
+    test "sends compile_historical_records after some init_lag_milliseconds" do
+      Application.put_env(:explorer, TestHistorian, init_lag_milliseconds: 200)
       assert {:ok, %{:historian => TestHistorian}} = HistoryProcess.init([:ok, TestHistorian])
       refute_receive {:compile_historical_records, 365}, 150
       assert_receive {:compile_historical_records, 365}
@@ -52,7 +52,7 @@ defmodule Explorer.History.ProcessTest do
     record = %{date: ~D[2018-04-01], closing_price: Decimal.new(10), opening_price: Decimal.new(5)}
 
     TestHistorian
-    |> expect(:compile_records, fn 1 -> {:ok, [record]} end)
+    |> expect(:compile_records, fn 2 -> {:ok, [record]} end)
     |> expect(:save_records, fn _ -> :ok end)
 
     state = %{historian: TestHistorian}
@@ -66,10 +66,10 @@ defmodule Explorer.History.ProcessTest do
     assert {:noreply, state} == HistoryProcess.handle_info({nil, {1, 0, {:ok, [record]}}}, state)
 
     # Message isn't sent before interval is up
-    refute_receive {:compile_historical_records, 1}, history_fetch_interval - 1
+    refute_receive {:compile_historical_records, 2}, history_fetch_interval - 1
 
     # Now message is sent
-    assert_receive {:compile_historical_records, 1}
+    assert_receive {:compile_historical_records, 2}
   end
 
   test "handle_info with failed task" do
