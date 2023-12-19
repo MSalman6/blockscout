@@ -54,6 +54,7 @@ defmodule Explorer.ExchangeRatesTest do
     state = %{}
 
     expect(TestSource, :format_data, fn _ -> [Token.null()] end)
+    expect(TestSource, :headers, fn -> [] end)
     set_mox_global()
 
     assert {:noreply, ^state} = ExchangeRates.handle_info(:update, state)
@@ -74,6 +75,7 @@ defmodule Explorer.ExchangeRatesTest do
         id: "test_id",
         last_updated: DateTime.utc_now(),
         market_cap_usd: Decimal.new("1000000.0"),
+        tvl_usd: Decimal.new("2000000.0"),
         name: "test_name",
         symbol: "test_symbol",
         usd_value: Decimal.new("1.0"),
@@ -102,6 +104,7 @@ defmodule Explorer.ExchangeRatesTest do
       state = %{}
 
       expect(TestSource, :format_data, fn _ -> [Token.null()] end)
+      expect(TestSource, :headers, fn -> [] end)
       set_mox_global()
 
       assert {:noreply, ^state} = ExchangeRates.handle_info({nil, {:error, "some error"}}, state)

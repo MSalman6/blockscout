@@ -6,9 +6,9 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
   alias Explorer.Chain.Import.Runner.InternalTransactions
 
   describe "run/1" do
-    test "transaction's status becomes :error when its internal_transaction has an error" do
+    test "transaction's status doesn't become :error when its internal_transaction has an error" do
       transaction = insert(:transaction) |> with_block(status: :ok)
-      insert(:pending_block_operation, block_hash: transaction.block_hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
 
       assert :ok == transaction.status
 
@@ -19,12 +19,80 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
 
       assert {:ok, _} = run_internal_transactions([internal_transaction_changes])
 
-      assert :error == Repo.get(Transaction, transaction.hash).status
+      assert :ok == Repo.get(Transaction, transaction.hash).status
     end
 
-    test "simple coin transfer's status becomes :error when its internal_transaction has an error" do
+    test "transaction's has_error_in_internal_txs become true when its internal_transaction (where index != 0) has an error" do
       transaction = insert(:transaction) |> with_block(status: :ok)
-      insert(:pending_block_operation, block_hash: transaction.block_hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
+
+      assert :ok == transaction.status
+      assert nil == transaction.has_error_in_internal_txs
+
+      index = 0
+      error = nil
+
+      internal_transaction_changes = make_internal_transaction_changes(transaction, index, error)
+
+      index = 1
+      error = "Reverted"
+
+      internal_transaction_changes_1 = make_internal_transaction_changes(transaction, index, error)
+
+      assert {:ok, _} = run_internal_transactions([internal_transaction_changes, internal_transaction_changes_1])
+      tx = Repo.get(Transaction, transaction.hash)
+
+      assert :ok == tx.status
+      assert true == tx.has_error_in_internal_txs
+    end
+
+    test "transaction's has_error_in_internal_txs become false when its internal_transaction (where index == 0) has an error" do
+      transaction = insert(:transaction) |> with_block(status: :ok)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
+
+      assert :ok == transaction.status
+      assert nil == transaction.has_error_in_internal_txs
+
+      index = 0
+      error = "Reverted"
+
+      internal_transaction_changes = make_internal_transaction_changes(transaction, index, error)
+
+      assert {:ok, _} = run_internal_transactions([internal_transaction_changes])
+      tx = Repo.get(Transaction, transaction.hash)
+
+      assert :ok == tx.status
+      assert false == tx.has_error_in_internal_txs
+    end
+
+    test "transaction's has_error_in_internal_txs become false when its internal_transaction has no error" do
+      transaction = insert(:transaction) |> with_block(status: :ok)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
+
+      assert :ok == transaction.status
+      assert nil == transaction.has_error_in_internal_txs
+
+      index = 0
+      error = nil
+
+      internal_transaction_changes = make_internal_transaction_changes(transaction, index, error)
+
+      index = 1
+      error = nil
+
+      internal_transaction_changes_1 = make_internal_transaction_changes(transaction, index, error)
+
+      assert {:ok, _} = run_internal_transactions([internal_transaction_changes, internal_transaction_changes_1])
+
+      tx = Repo.get(Transaction, transaction.hash)
+
+      assert :ok == tx.status
+      assert false == tx.has_error_in_internal_txs
+    end
+
+    test "simple coin transfer's status doesn't become :error when its internal_transaction has an error" do
+      transaction = insert(:transaction) |> with_block(status: :ok)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
 
       assert :ok == transaction.status
 
@@ -36,15 +104,15 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
 
       assert {:ok, _} = run_internal_transactions([internal_transaction_changes])
 
-      assert :error == Repo.get(Transaction, transaction.hash).status
+      assert :ok == Repo.get(Transaction, transaction.hash).status
     end
 
-    test "for block with 2 simple coin transfer's statuses become :error when its both internal_transactions has an error" do
+    test "for block with 2 simple coin transfer's statuses doesn't become :error even when its both internal_transactions has an error" do
       a_block = insert(:block, number: 1000)
       transaction1 = insert(:transaction) |> with_block(a_block, status: :ok)
       transaction2 = insert(:transaction) |> with_block(a_block, status: :ok)
 
-      insert(:pending_block_operation, block_hash: a_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: a_block.hash, block_number: a_block.number)
 
       assert :ok == transaction1.status
       assert :ok == transaction2.status
@@ -60,31 +128,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
 
       assert {:ok, _} = run_internal_transactions([internal_transaction_changes_1, internal_transaction_changes_2])
 
-      assert :error == Repo.get(Transaction, transaction1.hash).status
-      assert :error == Repo.get(Transaction, transaction2.hash).status
-    end
-
-    test "for block with 2 simple coin transfer's only status become :error for tx where internal_transactions has an error" do
-      a_block = insert(:block, number: 1000)
-      transaction1 = insert(:transaction) |> with_block(a_block, status: :ok)
-      transaction2 = insert(:transaction) |> with_block(a_block, status: :ok)
-      insert(:pending_block_operation, block_hash: a_block.hash, fetch_internal_transactions: true)
-
-      assert :ok == transaction1.status
-      assert :ok == transaction2.status
-
-      index = 0
-      error = "Out of gas"
-
-      internal_transaction_changes_1 =
-        make_internal_transaction_changes_for_simple_coin_transfers(transaction1, index, error)
-
-      internal_transaction_changes_2 =
-        make_internal_transaction_changes_for_simple_coin_transfers(transaction2, index, nil)
-
-      assert {:ok, _} = run_internal_transactions([internal_transaction_changes_1, internal_transaction_changes_2])
-
-      assert :error == Repo.get(Transaction, transaction1.hash).status
+      assert :ok == Repo.get(Transaction, transaction1.hash).status
       assert :ok == Repo.get(Transaction, transaction2.hash).status
     end
 
@@ -93,7 +137,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
       transaction0 = insert(:transaction) |> with_block(a_block, status: :ok)
       transaction1 = insert(:transaction) |> with_block(a_block, status: :ok)
       transaction2 = insert(:transaction) |> with_block(a_block, status: :ok)
-      insert(:pending_block_operation, block_hash: a_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: a_block.hash, block_number: a_block.number)
 
       assert :ok == transaction0.status
       assert :ok == transaction1.status
@@ -135,7 +179,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
 
     test "simple coin transfer has no internal transaction inserted" do
       transaction = insert(:transaction) |> with_block(status: :ok)
-      insert(:pending_block_operation, block_hash: transaction.block_hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
 
       assert :ok == transaction.status
 
@@ -153,7 +197,7 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
       transaction = insert(:transaction) |> with_block(status: :ok)
       pending = insert(:transaction)
 
-      insert(:pending_block_operation, block_hash: transaction.block_hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
 
       assert :ok == transaction.status
       assert is_nil(pending.block_hash)
@@ -178,14 +222,14 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
       empty_block = insert(:block)
       pending = insert(:transaction)
 
-      insert(:pending_block_operation, block_hash: empty_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: empty_block.hash, block_number: empty_block.number)
 
       assert is_nil(pending.block_hash)
 
       full_block = insert(:block)
       inserted = insert(:transaction) |> with_block(full_block)
 
-      insert(:pending_block_operation, block_hash: full_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: full_block.hash, block_number: full_block.number)
 
       assert full_block.hash == inserted.block_hash
 
@@ -209,39 +253,12 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
       assert PendingBlockOperation |> Repo.get(full_block.hash) |> is_nil()
     end
 
-    test "removes old records with the same primary key (transaction_hash, index)" do
-      full_block = insert(:block)
-      another_full_block = insert(:block)
-
-      transaction = insert(:transaction) |> with_block(full_block)
-
-      insert(:internal_transaction,
-        index: 0,
-        transaction: transaction,
-        block_hash: another_full_block.hash,
-        block_index: 0
-      )
-
-      insert(:pending_block_operation, block_hash: full_block.hash, fetch_internal_transactions: true)
-
-      transaction_changes = make_internal_transaction_changes(transaction, 0, nil)
-
-      assert {:ok, %{remove_left_over_internal_transactions: {1, nil}}} =
-               run_internal_transactions([transaction_changes])
-
-      assert from(i in InternalTransaction,
-               where: i.transaction_hash == ^transaction.hash and i.block_hash == ^another_full_block.hash
-             )
-             |> Repo.one()
-             |> is_nil()
-    end
-
     test "removes consensus to blocks where not all transactions are filled" do
       full_block = insert(:block)
       transaction_a = insert(:transaction) |> with_block(full_block)
       transaction_b = insert(:transaction) |> with_block(full_block)
 
-      insert(:pending_block_operation, block_hash: full_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: full_block.hash, block_number: full_block.number)
 
       transaction_a_changes = make_internal_transaction_changes(transaction_a, 0, nil)
 
@@ -257,12 +274,12 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
     test "does not remove consensus when block is empty and no transactions are missing" do
       empty_block = insert(:block)
 
-      insert(:pending_block_operation, block_hash: empty_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: empty_block.hash, block_number: empty_block.number)
 
       full_block = insert(:block)
       inserted = insert(:transaction) |> with_block(full_block)
 
-      insert(:pending_block_operation, block_hash: full_block.hash, fetch_internal_transactions: true)
+      insert(:pending_block_operation, block_hash: full_block.hash, block_number: full_block.number)
 
       assert full_block.hash == inserted.block_hash
 
@@ -287,6 +304,34 @@ defmodule Explorer.Chain.Import.Runner.InternalTransactionsTest do
 
       assert %{consensus: true} = Repo.get(Block, full_block.hash)
       assert PendingBlockOperation |> Repo.get(full_block.hash) |> is_nil()
+    end
+
+    test "successfully imports internal transaction with stop type" do
+      block = insert(:block)
+      transaction = insert(:transaction) |> with_block(block, status: :ok)
+      insert(:pending_block_operation, block_hash: transaction.block_hash, block_number: transaction.block_number)
+
+      assert :ok == transaction.status
+
+      {:ok, from_address_hash} = Explorer.Chain.Hash.Address.cast("0x0000000000000000000000000000000000000000")
+      {:ok, input} = Explorer.Chain.Data.cast("0x")
+
+      internal_transaction_changes = %{
+        block_number: block.number,
+        error: "execution stopped",
+        from_address_hash: from_address_hash,
+        gas: 0,
+        gas_used: 22594,
+        index: 0,
+        input: input,
+        trace_address: [],
+        transaction_hash: transaction.hash,
+        transaction_index: 0,
+        type: :stop,
+        value: Wei.from(Decimal.new(0), :wei)
+      }
+
+      assert {:ok, _} = run_internal_transactions([internal_transaction_changes])
     end
   end
 

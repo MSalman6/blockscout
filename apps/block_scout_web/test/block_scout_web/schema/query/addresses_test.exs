@@ -18,7 +18,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => to_string(address.hash)}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert json_response(conn, 200) == %{
                "data" => %{
@@ -47,7 +47,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => to_string(address.hash)}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert json_response(conn, 200) == %{
                "data" => %{
@@ -62,7 +62,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
     test "smart_contract returns all expected fields", %{conn: conn} do
       address = insert(:address, fetched_coin_balance: 100)
-      smart_contract = insert(:smart_contract, address_hash: address.hash)
+      smart_contract = insert(:smart_contract, address_hash: address.hash, contract_code_md5: "123")
 
       query = """
       query ($hashes: [AddressHash!]!) {
@@ -82,7 +82,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => to_string(address.hash)}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert json_response(conn, 200) == %{
                "data" => %{
@@ -116,7 +116,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => [to_string(address.hash)]}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert %{"errors" => [error]} = json_response(conn, 200)
       assert error["message"] =~ ~s(Addresses not found.)
@@ -133,7 +133,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert %{"errors" => [error]} = json_response(conn, 200)
       assert error["message"] == ~s(In argument "hashes": Expected type "[AddressHash!]!", found null.)
@@ -150,7 +150,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => ["someInvalidHash"]}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert %{"errors" => [error]} = json_response(conn, 200)
       assert error["message"] =~ ~s(Argument "hashes" has invalid value)
@@ -175,7 +175,7 @@ defmodule BlockScoutWeb.Schema.Query.AddressesTest do
 
       variables = %{"hashes" => hashes}
 
-      conn = get(conn, "/graphql", query: query, variables: variables)
+      conn = get(conn, "/api/v1/graphql", query: query, variables: variables)
 
       assert %{"errors" => [error1, error2]} = json_response(conn, 200)
       assert error1["message"] =~ ~s(Field addresses is too complex)

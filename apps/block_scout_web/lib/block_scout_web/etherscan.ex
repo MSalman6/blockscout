@@ -106,7 +106,8 @@ defmodule BlockScoutWeb.Etherscan do
         "transactionHash" => "0xd65b788c610949704a5f9aac2228c7c777434dfe11c863a12306f57fcbd8cdbb",
         "index" => "0",
         "input" => "",
-        "type" => "create",
+        "type" => "call",
+        "callType" => "delegatecall",
         "gas" => "814937",
         "gasUsed" => "536262",
         "isError" => "0",
@@ -324,6 +325,20 @@ defmodule BlockScoutWeb.Etherscan do
     }
   }
 
+  @stats_totalfees_example_value %{
+    "status" => "1",
+    "message" => "OK",
+    "result" => %{
+      "total_fees" => "75411956011480008034"
+    }
+  }
+
+  @stats_totalfees_example_value_error %{
+    "status" => "0",
+    "message" => "An incorrect input date provided. It should be in ISO 8601 format (yyyy-mm-dd).",
+    "result" => nil
+  }
+
   @block_getblockreward_example_value %{
     "status" => "1",
     "message" => "OK",
@@ -448,7 +463,9 @@ defmodule BlockScoutWeb.Etherscan do
       """,
       "ContractName" => "Test",
       "CompilerVersion" => "v0.2.1-2016-01-30-91a6b35",
-      "OptimizationUsed" => "1"
+      "OptimizationUsed" => "1",
+      "IsProxy" => "true",
+      "ImplementationAddress" => "0x000000000000000000000000000000000000000e"
     }
   }
 
@@ -456,6 +473,18 @@ defmodule BlockScoutWeb.Etherscan do
     "status" => "0",
     "message" => "There was an error verifying the contract.",
     "result" => nil
+  }
+
+  @contract_verifysourcecode_example_value %{
+    "message" => "OK",
+    "result" => "b080b96bd06ad1c9341c2afb7e3730311388544961acde94",
+    "status" => "1"
+  }
+
+  @contract_checkverifystatus_example_value %{
+    "message" => "OK",
+    "result" => "Pending in queue",
+    "status" => "1"
   }
 
   @contract_getsourcecode_example_value %{
@@ -491,7 +520,10 @@ defmodule BlockScoutWeb.Etherscan do
       """,
       "ContractName" => "Test",
       "CompilerVersion" => "v0.2.1-2016-01-30-91a6b35",
-      "OptimizationUsed" => "1"
+      "OptimizationUsed" => "1",
+      "FileName" => "{sourcify path or empty}",
+      "IsProxy" => "true",
+      "ImplementationAddress" => "0x000000000000000000000000000000000000000e"
     }
   }
 
@@ -645,6 +677,7 @@ defmodule BlockScoutWeb.Etherscan do
   }
 
   @token_id_type %{
+    name: "Token ID",
     type: "integer",
     definition: "id of token",
     example: ~s("0")
@@ -775,6 +808,11 @@ defmodule BlockScoutWeb.Etherscan do
         definition: ~s(Possible values: "create", "call", "reward", or "selfdestruct"),
         example: ~s("create")
       },
+      callType: %{
+        type: "type",
+        definition: ~s(Possible values: "call", "callcode", "delegatecall", or "staticcall"),
+        example: ~s("delegatecall")
+      },
       gas: @gas_type,
       gasUsed: @gas_type,
       isError: %{
@@ -830,8 +868,21 @@ defmodule BlockScoutWeb.Etherscan do
         definition: "The transferred amount.",
         example: ~s("663046792267785498951364")
       },
+      values: %{
+        type: "array",
+        array_type: %{
+          name: "Transferred amount",
+          type: "integer",
+          definition: "The transferred amount of particular token instance."
+        },
+        definition: "Transferred amounts of token instances in ERC-1155 batch transfer corresponding to tokenIDs field."
+      },
       tokenName: @token_name_type,
       tokenID: @token_id_type,
+      tokenIDs: %{
+        type: "array",
+        array_type: @token_id_type
+      },
       tokenSymbol: @token_symbol_type,
       tokenDecimal: @token_decimal_type,
       transactionIndex: @transaction_index_type,
@@ -1001,6 +1052,28 @@ defmodule BlockScoutWeb.Etherscan do
     }
   }
 
+  @uid_response_model %{
+    name: "UID",
+    fields: %{
+      "UID" => %{
+        type: "string",
+        definition: "Unique identifier of the verification attempt",
+        example: "b080b96bd06ad1c9341c2afb7e3730311388544961acde94"
+      }
+    }
+  }
+
+  @status_response_model %{
+    name: "Status",
+    fields: %{
+      "status" => %{
+        type: "string",
+        definition: "Current status of the verification attempt",
+        example: "`Pending in queue` | `Pass - Verified` | `Fail - Unable to verify` | `Unknown UID`"
+      }
+    }
+  }
+
   @contract_source_code_type %{
     type: "contract source code",
     definition: "The contract's source code.",
@@ -1134,6 +1207,17 @@ defmodule BlockScoutWeb.Etherscan do
     }
   }
 
+  @total_fees_model %{
+    name: "TotalFees",
+    fields: %{
+      total_fees: %{
+        type: "total_fees",
+        definition: "Total transaction fees in Wei are paid by users to validators per day.",
+        example: ~s("75411956011480008034")
+      }
+    }
+  }
+
   @account_eth_get_balance_action %{
     name: "eth_get_balance",
     description:
@@ -1156,7 +1240,7 @@ defmodule BlockScoutWeb.Etherscan do
 
         latest will be the latest balance in a *consensus* block.
         earliest will be the first recorded balance for the address.
-        pending will be the latest balance in consensus *or* nonconcensus blocks.
+        pending will be the latest balance in consensus *or* nonconsensus blocks.
         """
       }
     ],
@@ -1336,12 +1420,12 @@ defmodule BlockScoutWeb.Etherscan do
           "A string representing the order by block number direction. Defaults to descending order. Available values: asc, desc"
       },
       %{
-        key: "startblock",
+        key: "start_block",
         type: "integer",
         description: "A nonnegative integer that represents the starting block number."
       },
       %{
-        key: "endblock",
+        key: "end_block",
         type: "integer",
         description: "A nonnegative integer that represents the ending block number."
       },
@@ -1358,7 +1442,7 @@ defmodule BlockScoutWeb.Etherscan do
           "A nonnegative integer that represents the maximum number of records to return when paginating. 'page' must be provided in conjunction."
       },
       %{
-        key: "filterby",
+        key: "filter_by",
         type: "string",
         description: """
         A string representing the field to filter by. If none is given
@@ -1367,12 +1451,12 @@ defmodule BlockScoutWeb.Etherscan do
         """
       },
       %{
-        key: "starttimestamp",
+        key: "start_timestamp",
         type: "unix timestamp",
         description: "Represents the starting block timestamp."
       },
       %{
-        key: "endtimestamp",
+        key: "end_timestamp",
         type: "unix timestamp",
         description: "Represents the ending block timestamp."
       }
@@ -1412,7 +1496,7 @@ defmodule BlockScoutWeb.Etherscan do
         placeholder: "transactionHash",
         type: "string",
         description:
-          "Transaction hash. Hash of contents of the transaction. A transcation hash or address hash is required."
+          "Transaction hash. Hash of contents of the transaction. A transaction hash or address hash is required."
       }
     ],
     optional_params: [
@@ -1429,13 +1513,13 @@ defmodule BlockScoutWeb.Etherscan do
           "A string representing the order by block number direction. Defaults to ascending order. Available values: asc, desc. WARNING: Only available if 'address' is provided."
       },
       %{
-        key: "startblock",
+        key: "start_block",
         type: "integer",
         description:
           "A nonnegative integer that represents the starting block number. WARNING: Only available if 'address' is provided."
       },
       %{
-        key: "endblock",
+        key: "end_block",
         type: "integer",
         description:
           "A nonnegative integer that represents the ending block number. WARNING: Only available if 'address' is provided."
@@ -1504,12 +1588,12 @@ defmodule BlockScoutWeb.Etherscan do
           "A string representing the order by block number direction. Defaults to ascending order. Available values: asc, desc"
       },
       %{
-        key: "startblock",
+        key: "start_block",
         type: "integer",
         description: "A nonnegative integer that represents the starting block number."
       },
       %{
-        key: "endblock",
+        key: "end_block",
         type: "integer",
         description: "A nonnegative integer that represents the ending block number."
       },
@@ -2067,9 +2151,46 @@ defmodule BlockScoutWeb.Etherscan do
     ]
   }
 
+  @stats_totalfees_action %{
+    name: "totalfees",
+    description: "Gets total transaction fees in Wei are paid by users to validators per day.",
+    required_params: [
+      %{
+        key: "date",
+        placeholder: "date",
+        type: "string",
+        description: "day in ISO 8601 format (yyyy-mm-dd)"
+      }
+    ],
+    optional_params: [],
+    responses: [
+      %{
+        code: "200",
+        description: "successful operation",
+        example_value: Jason.encode!(@stats_totalfees_example_value),
+        model: %{
+          name: "Result",
+          fields: %{
+            status: @status_type,
+            message: @message_type,
+            result: %{
+              type: "model",
+              model: @total_fees_model
+            }
+          }
+        }
+      },
+      %{
+        code: "200",
+        description: "error",
+        example_value: Jason.encode!(@stats_totalfees_example_value_error)
+      }
+    ]
+  }
+
   @block_eth_block_number_action %{
     name: "eth_block_number",
-    description: "Mimics Ethereum JSON RPC's eth_blockNumber. Returns the lastest block number",
+    description: "Mimics Ethereum JSON RPC's eth_blockNumber. Returns the latest block number",
     required_params: [],
     optional_params: [
       %{
@@ -2209,6 +2330,18 @@ defmodule BlockScoutWeb.Etherscan do
         type: "string",
         description:
           "Ensures that none of the returned contracts were decompiled with the provided version. Ignored unless filtering for decompiled contracts."
+      },
+      %{
+        key: "verified_at_start_timestamp",
+        type: "unix timestamp",
+        description:
+          "Represents the starting timestamp when contracts verified. Taking into account only with `verified` filter."
+      },
+      %{
+        key: "verified_at_end_timestamp",
+        type: "unix timestamp",
+        description:
+          "Represents the ending timestamp when contracts verified. Taking into account only with `verified` filter."
       }
     ],
     responses: [
@@ -2370,6 +2503,233 @@ defmodule BlockScoutWeb.Etherscan do
         code: "200",
         description: "error",
         example_value: Jason.encode!(@contract_verify_example_value_error)
+      }
+    ]
+  }
+
+  @contract_verify_via_sourcify_action %{
+    name: "verify_via_sourcify",
+    description: """
+    Verify a contract through <a href="https://sourcify.dev">Sourcify</a>.<br/>
+    a) if smart-contract already verified on Sourcify, it will automatically fetch the data from the <a href="https://repo.sourcify.dev">repo</a><br/>
+    b) otherwise you have to upload source files and JSON metadata file(s).
+    <br/>
+    <br/>
+    <p class="api-doc-list-item-text">POST body example:</p>
+    <br/>
+    <div class='tab-content'>
+    <div class='tab-pane fade show active'>
+    <div class="tile tile-muted p-1">
+    <div class="m-2">
+    --6e1e4c11657c62dc1e4349d024de9e28<br/>
+    Content-Disposition: form-data; name="addressHash"<br/>
+    <br/>
+    0xb77b7443e0F32F1FEBf0BE0fBd7124D135d0a525<br/>
+    <br/>
+    --6e1e4c11657c62dc1e4349d024de9e28<br/>
+    Content-Disposition: form-data; name="files[0]"; filename="contract.sol"<br/>
+    Content-Type: application/json<br/>
+    <br/>
+    ...Source code...<br/>
+    <br/>
+    --6e1e4c11657c62dc1e4349d024de9e28<br/>
+    Content-Disposition: form-data; name="files[1]"; filename="metadata.json"<br/>
+    Content-Type: application/json<br/>
+    <br/>
+    ...JSON metadata...<br/>
+    <br/>
+    --6e1e4c11657c62dc1e4349d024de9e28--<br/>
+    </pre>
+    </div>
+    </div>
+    </div>
+    """,
+    required_params: [
+      %{
+        key: "addressHash",
+        placeholder: "addressHash",
+        type: "string",
+        description: "The address of the contract."
+      }
+    ],
+    optional_params: [
+      %{
+        key: "files",
+        type: "file[]",
+        description: "Array with sources and metadata files"
+      }
+    ],
+    responses: [
+      %{
+        code: "200",
+        description: "successful operation",
+        example_value: Jason.encode!(@contract_verify_example_value),
+        type: "model",
+        model: @contract_model
+      },
+      %{
+        code: "200",
+        description: "error",
+        example_value: Jason.encode!(@contract_verify_example_value_error)
+      }
+    ]
+  }
+
+  @contract_verify_vyper_contract_action %{
+    name: "verify_vyper_contract",
+    description: """
+    Verify a vyper contract with its source code and contract creation information.
+    <br/>
+    <br/>
+    <p class="api-doc-list-item-text">curl POST example:</p>
+    <br/>
+    <div class='tab-content'>
+    <div class='tab-pane fade show active'>
+    <div class="tile tile-muted p-1">
+    <div class="m-2">
+    curl --location --request POST 'http://localhost:4000/api?module=contract&action=verify_vyper_contract' \
+    --form 'contractSourceCode="SOURCE_CODE"' \
+    --form 'name="Vyper_contract"' \
+    --form 'addressHash="0xE60B1B8bD493569a3E945be50A6c89d29a560Fa1"' \
+    --form 'compilerVersion="v0.2.12"'
+    </pre>
+    </div>
+    </div>
+    </div>
+    """,
+    required_params: [
+      %{
+        key: "addressHash",
+        placeholder: "addressHash",
+        type: "string",
+        description: "The address of the contract."
+      },
+      %{
+        key: "name",
+        placeholder: "name",
+        type: "string",
+        description: "The name of the contract."
+      },
+      %{
+        key: "compilerVersion",
+        placeholder: "compilerVersion",
+        type: "string",
+        description: "The compiler version for the contract."
+      },
+      %{
+        key: "contractSourceCode",
+        placeholder: "contractSourceCode",
+        type: "string",
+        description: "The source code of the contract."
+      }
+    ],
+    optional_params: [
+      %{
+        key: "constructorArguments",
+        type: "string",
+        description: "The constructor argument data provided."
+      }
+    ],
+    responses: [
+      %{
+        code: "200",
+        description: "successful operation",
+        example_value: Jason.encode!(@contract_verify_example_value),
+        type: "model",
+        model: @contract_model
+      },
+      %{
+        code: "200",
+        description: "error",
+        example_value: Jason.encode!(@contract_verify_example_value_error)
+      }
+    ]
+  }
+
+  @contract_verifysourcecode_action %{
+    name: "verifysourcecode",
+    description: """
+    Verify a contract with Standard input JSON file. Its interface the same as <a href="https://docs.etherscan.io/tutorials/verifying-contracts-programmatically">Etherscan</a>'s API endpoint
+    <br/>
+    <br/>
+    """,
+    required_params: [
+      %{
+        name: "solidity-standard-json-input",
+        key: "codeformat",
+        placeholder: "solidity-standard-json-input",
+        type: "string",
+        description: "Format of sourceCode(supported only \"solidity-standard-json-input\")"
+      },
+      %{
+        key: "contractaddress",
+        placeholder: "contractaddress",
+        type: "string",
+        description: "The address of the contract."
+      },
+      %{
+        key: "contractname",
+        placeholder: "contractname",
+        type: "string",
+        description:
+          "The name of the contract. It could be empty string(\"\"), just contract name(\"ContractName\"), or filename and contract name(\"contracts/contract_1.sol:ContractName\")"
+      },
+      %{
+        key: "compilerversion",
+        placeholder: "compilerversion",
+        type: "string",
+        description: "The compiler version for the contract."
+      },
+      %{
+        key: "sourceCode",
+        placeholder: "sourceCode",
+        type: "string",
+        description: "Standard input json"
+      }
+    ],
+    optional_params: [
+      %{
+        key: "constructorArguments",
+        type: "string",
+        description: "The constructor argument data provided."
+      },
+      %{
+        key: "autodetectConstructorArguments",
+        placeholder: false,
+        type: "boolean",
+        description: "Whether or not automatically detect constructor argument."
+      }
+    ],
+    responses: [
+      %{
+        code: "200",
+        description: "successful operation",
+        example_value: Jason.encode!(@contract_verifysourcecode_example_value),
+        type: "model",
+        model: @uid_response_model
+      }
+    ]
+  }
+
+  @contract_checkverifystatus_action %{
+    name: "checkverifystatus",
+    description: "Return status of the verification attempt (works in addition to verifysourcecode method)",
+    required_params: [
+      %{
+        key: "guid",
+        placeholder: "identifierString",
+        type: "string",
+        description: "A string used for identifying verification attempt"
+      }
+    ],
+    optional_params: [],
+    responses: [
+      %{
+        code: "200",
+        description: "successful operation",
+        example_value: Jason.encode!(@contract_checkverifystatus_example_value),
+        type: "model",
+        model: @status_response_model
       }
     ]
   }
@@ -2602,7 +2962,8 @@ defmodule BlockScoutWeb.Etherscan do
       @stats_ethsupplyexchange_action,
       @stats_ethsupply_action,
       @stats_coinsupply_action,
-      @stats_coinprice_action
+      @stats_coinprice_action,
+      @stats_totalfees_action
     ]
   }
 
@@ -2617,7 +2978,11 @@ defmodule BlockScoutWeb.Etherscan do
       @contract_listcontracts_action,
       @contract_getabi_action,
       @contract_getsourcecode_action,
-      @contract_verify_action
+      @contract_verify_action,
+      @contract_verify_via_sourcify_action,
+      @contract_verify_vyper_contract_action,
+      @contract_verifysourcecode_action,
+      @contract_checkverifystatus_action
     ]
   }
 

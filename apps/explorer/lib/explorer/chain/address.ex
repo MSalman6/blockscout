@@ -7,7 +7,9 @@ defmodule Explorer.Chain.Address do
 
   use Explorer.Schema
 
+  alias Ecto.Association.NotLoaded
   alias Ecto.Changeset
+  alias Explorer.{Chain, PagingOptions}
 
   alias Explorer.Chain.{
     Address,
@@ -20,12 +22,13 @@ defmodule Explorer.Chain.Address do
     SmartContractAdditionalSource,
     Token,
     Transaction,
-    Wei
+    Wei,
+    Withdrawal
   }
 
-  alias Explorer.Chain.Cache.NetVersion
+  alias Explorer.Chain.Cache.{Accounts, NetVersion}
 
-  @optional_attrs ~w(contract_code fetched_coin_balance fetched_coin_balance_block_number nonce decompiled verified)a
+  @optional_attrs ~w(contract_code fetched_coin_balance fetched_coin_balance_block_number nonce decompiled verified gas_used transactions_count token_transfers_count)a
   @required_attrs ~w(hash)a
   @allowed_attrs @optional_attrs ++ @required_attrs
 
@@ -35,7 +38,7 @@ defmodule Explorer.Chain.Address do
   @type hash :: Hash.t()
 
   @typedoc """
-   * `fetched_coin_balance` - The last fetched balance from Parity
+   * `fetched_coin_balance` - The last fetched balance from Nethermind
    * `fetched_coin_balance_block_number` - the `t:Explorer.Chain.Block.t/0` `t:Explorer.Chain.Block.block_number/0` for
      which `fetched_coin_balance` was fetched
    * `hash` - the hash of the address's public key
@@ -58,7 +61,10 @@ defmodule Explorer.Chain.Address do
           contracts_creation_transaction: %Ecto.Association.NotLoaded{} | Transaction.t(),
           inserted_at: DateTime.t(),
           updated_at: DateTime.t(),
-          nonce: non_neg_integer() | nil
+          nonce: non_neg_integer() | nil,
+          transactions_count: non_neg_integer() | nil,
+          token_transfers_count: non_neg_integer() | nil,
+          gas_used: non_neg_integer() | nil
         }
 
   @derive {Poison.Encoder,
@@ -69,7 +75,8 @@ defmodule Explorer.Chain.Address do
              :token,
              :contracts_creation_internal_transaction,
              :contracts_creation_transaction,
-             :names
+             :names,
+             :smart_contract_additional_sources
            ]}
 
   @derive {Jason.Encoder,
@@ -80,7 +87,8 @@ defmodule Explorer.Chain.Address do
              :token,
              :contracts_creation_internal_transaction,
              :contracts_creation_transaction,
-             :names
+             :names,
+             :smart_contract_additional_sources
            ]}
 
   @primary_key {:hash, Hash.Address, autogenerate: false}
@@ -93,6 +101,9 @@ defmodule Explorer.Chain.Address do
     field(:verified, :boolean, default: false)
     field(:has_decompiled_code?, :boolean, virtual: true)
     field(:stale?, :boolean, virtual: true)
+    field(:transactions_count, :integer)
+    field(:token_transfers_count, :integer)
+    field(:gas_used, :integer)
 
     has_one(:smart_contract, SmartContract)
     has_one(:token, Token, foreign_key: :contract_address_hash)
@@ -112,6 +123,7 @@ defmodule Explorer.Chain.Address do
     has_many(:names, Address.Name, foreign_key: :address_hash)
     has_many(:decompiled_smart_contracts, DecompiledSmartContract, foreign_key: :address_hash)
     has_many(:smart_contract_additional_sources, SmartContractAdditionalSource, foreign_key: :address_hash)
+    has_many(:withdrawals, Withdrawal, foreign_key: :address_hash)
 
     timestamps()
   end
@@ -139,6 +151,8 @@ defmodule Explorer.Chain.Address do
   end
 
   def checksum(address_or_hash, iodata? \\ false)
+
+  def checksum(nil, _iodata?), do: ""
 
   def checksum(%__MODULE__{hash: hash}, iodata?) do
     checksum(hash, iodata?)
@@ -210,7 +224,7 @@ defmodule Explorer.Chain.Address do
   end
 
   defp stream_every_four_bytes_of_sha256(value) do
-    {:ok, hash} = ExKeccak.hash_256(value)
+    hash = ExKeccak.hash_256(value)
 
     hash
     |> stream_binary()
@@ -241,6 +255,16 @@ defmodule Explorer.Chain.Address do
   end
 
   @doc """
+    Preloads provided contracts associations if address has contract_code which is not nil
+  """
+  @spec maybe_preload_smart_contract_associations(Address.t(), list, list) :: Address.t()
+  def maybe_preload_smart_contract_associations(%Address{contract_code: nil} = address, _associations, _options),
+    do: address
+
+  def maybe_preload_smart_contract_associations(%Address{contract_code: _} = address, associations, options),
+    do: Chain.select_repo(options).preload(address, associations)
+
+  @doc """
   Counts all the addresses where the `fetched_coin_balance` is > 0.
   """
   def count_with_fetched_coin_balance do
@@ -251,14 +275,10 @@ defmodule Explorer.Chain.Address do
     )
   end
 
-  @doc """
-  Counts all the addresses.
-  """
-  def count do
-    from(
-      a in Address,
-      select: fragment("COUNT(*)")
-    )
+  def fetched_coin_balance(address_hash) when not is_nil(address_hash) do
+    Address
+    |> where([address], address.hash == ^address_hash)
+    |> select([address], address.fetched_coin_balance)
   end
 
   defimpl String.Chars do
@@ -284,5 +304,78 @@ defmodule Explorer.Chain.Address do
     def to_string(%@for{} = address) do
       @for.checksum(address)
     end
+  end
+
+  @default_paging_options %PagingOptions{page_size: 50}
+  @doc """
+  Lists the top `t:Explorer.Chain.Address.t/0`'s' in descending order based on coin balance and address hash.
+
+  """
+  @spec list_top_addresses :: [{Address.t(), non_neg_integer()}]
+  def list_top_addresses(options \\ []) do
+    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
+
+    if is_nil(paging_options.key) do
+      paging_options.page_size
+      |> Accounts.take_enough()
+      |> case do
+        nil ->
+          get_addresses(options)
+
+        accounts ->
+          Enum.map(
+            accounts,
+            &{&1, &1.transactions_count || 0}
+          )
+      end
+    else
+      fetch_top_addresses(options)
+    end
+  end
+
+  @doc """
+  Checks if given address is smart-contract
+  """
+  @spec is_smart_contract(any()) :: boolean() | nil
+  def is_smart_contract(%__MODULE__{contract_code: nil}), do: false
+  def is_smart_contract(%__MODULE__{contract_code: _}), do: true
+  def is_smart_contract(%NotLoaded{}), do: nil
+  def is_smart_contract(_), do: false
+
+  defp get_addresses(options) do
+    accounts_with_n = fetch_top_addresses(options)
+
+    accounts_with_n
+    |> Enum.map(fn {address, _n} -> address end)
+    |> Accounts.update()
+
+    accounts_with_n
+  end
+
+  defp fetch_top_addresses(options) do
+    paging_options = Keyword.get(options, :paging_options, @default_paging_options)
+
+    base_query =
+      from(a in Address,
+        where: a.fetched_coin_balance > ^0,
+        order_by: [desc: a.fetched_coin_balance, asc: a.hash],
+        preload: [:names, :smart_contract],
+        select: {a, a.transactions_count}
+      )
+
+    base_query
+    |> page_addresses(paging_options)
+    |> limit(^paging_options.page_size)
+    |> Chain.select_repo(options).all()
+  end
+
+  defp page_addresses(query, %PagingOptions{key: nil}), do: query
+
+  defp page_addresses(query, %PagingOptions{key: {coin_balance, hash}}) do
+    from(address in query,
+      where:
+        (address.fetched_coin_balance == ^coin_balance and address.hash > ^hash) or
+          address.fetched_coin_balance < ^coin_balance
+    )
   end
 end

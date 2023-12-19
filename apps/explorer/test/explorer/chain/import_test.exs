@@ -350,6 +350,19 @@ defmodule Explorer.Chain.ImportTest do
               }} = Import.all(@import_data)
     end
 
+    test "block consensus removed if there was an exception in further steps" do
+      not_existing_block_hash = "0xf6b4b8c88df3ebd252ec476328334dc026cf66606a84fb769b3d3cbccc8471db"
+
+      incorrect_data =
+        update_in(@import_data, [:transactions, :params], fn params ->
+          [params |> Enum.at(0) |> Map.put(:block_hash, not_existing_block_hash)]
+        end)
+
+      assert_raise(Postgrex.Error, fn -> Import.all(incorrect_data) end)
+      assert [] = Repo.all(Transaction)
+      assert %{consensus: false} = Repo.one(Block)
+    end
+
     test "inserts a token_balance" do
       params = %{
         addresses: %{
@@ -375,17 +388,20 @@ defmodule Explorer.Chain.ImportTest do
             %{
               address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
               token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-              block_number: "37"
+              block_number: "37",
+              token_type: "ERC-20"
             },
             %{
               address_hash: "0x515c09c5bba1ed566b02a5b0599ec5d5d0aee73d",
               token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-              block_number: "37"
+              block_number: "37",
+              token_type: "ERC-20"
             },
             %{
               address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
               token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
-              block_number: "37"
+              block_number: "37",
+              token_type: "ERC-20"
             }
           ],
           timeout: 5
@@ -425,13 +441,15 @@ defmodule Explorer.Chain.ImportTest do
               address_hash: "0xe8ddc5c7a2d2f0d7a9798459c0104fdf5e987aca",
               token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
               block_number: "37",
-              value: 200
+              value: 200,
+              token_type: "ERC-20"
             },
             %{
               address_hash: "0x515c09c5bba1ed566b02a5b0599ec5d5d0aee73d",
               token_contract_address_hash: "0x8bf38d4764929064f2d4d3a56520a76ab3df415b",
               block_number: "37",
-              value: 100
+              value: 100,
+              token_type: "ERC-20"
             }
           ],
           timeout: 5
@@ -642,11 +660,12 @@ defmodule Explorer.Chain.ImportTest do
 
       assert {:ok, _} = Import.all(options)
 
-      assert [block_hash] = Explorer.Repo.all(PendingBlockOperation.block_hashes(:fetch_internal_transactions))
+      {:ok, block_hash_casted} = Explorer.Chain.Hash.Full.cast(block_hash)
+      assert [^block_hash_casted] = Explorer.Repo.all(PendingBlockOperation.block_hashes())
 
       assert {:ok, _} = Import.all(internal_txs_options)
 
-      assert [] == Explorer.Repo.all(PendingBlockOperation.block_hashes(:fetch_internal_transactions))
+      assert [] == Explorer.Repo.all(PendingBlockOperation.block_hashes())
     end
 
     test "blocks with simple coin transfers updates PendingBlockOperation status" do
@@ -731,11 +750,12 @@ defmodule Explorer.Chain.ImportTest do
 
       assert {:ok, _} = Import.all(options)
 
-      assert [block_hash] = Explorer.Repo.all(PendingBlockOperation.block_hashes(:fetch_internal_transactions))
+      {:ok, block_hash_casted} = Explorer.Chain.Hash.Full.cast(block_hash)
+      assert [^block_hash_casted] = Explorer.Repo.all(PendingBlockOperation.block_hashes())
 
       assert {:ok, _} = Import.all(internal_txs_options)
 
-      assert [] == Explorer.Repo.all(PendingBlockOperation.block_hashes(:fetch_internal_transactions))
+      assert [] == Explorer.Repo.all(PendingBlockOperation.block_hashes())
     end
 
     test "when the transaction has no to_address and an internal transaction with type create it populates the denormalized created_contract_address_hash" do
@@ -1564,8 +1584,8 @@ defmodule Explorer.Chain.ImportTest do
                  },
                  address_coin_balances: %{
                    params: [
-                     %{address_hash: miner_hash, block_number: block_number, value: nil},
-                     %{address_hash: uncle_miner_hash, block_number: block_number, value: nil}
+                     %{address_hash: miner_hash, block_number: block_number, value: nil, token_type: "ERC-20"},
+                     %{address_hash: uncle_miner_hash, block_number: block_number, value: nil, token_type: "ERC-20"}
                    ],
                    timeout: 1
                  },
@@ -2250,7 +2270,8 @@ defmodule Explorer.Chain.ImportTest do
                        address_hash: address_hash,
                        token_contract_address_hash: token_contract_address_hash,
                        block_number: block_number,
-                       value: value_after
+                       value: value_after,
+                       token_type: "ERC-20"
                      }
                    ]
                  },
@@ -2260,7 +2281,8 @@ defmodule Explorer.Chain.ImportTest do
                        address_hash: address_hash,
                        token_contract_address_hash: token_contract_address_hash,
                        block_number: block_number,
-                       value: value_after
+                       value: value_after,
+                       token_type: "ERC-20"
                      }
                    ]
                  },

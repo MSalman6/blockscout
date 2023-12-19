@@ -5,19 +5,25 @@ defmodule Explorer.Application do
 
   use Application
 
-  alias Explorer.Admin
+  alias Explorer.{Admin, TokenTransferTokenIdMigration}
 
   alias Explorer.Chain.Cache.{
     Accounts,
+    AddressesTabsCounters,
     AddressSum,
     AddressSumMinusBurnt,
-    BlockCount,
+    Block,
     BlockNumber,
     Blocks,
+    GasPriceOracle,
     GasUsage,
+    MinMissingBlockNumber,
     NetVersion,
-    TransactionCount,
+    PendingBlockOperation,
+    StateChanges,
+    Transaction,
     Transactions,
+    TransactionsApiV2,
     Uncles
   }
 
@@ -40,58 +46,106 @@ defmodule Explorer.Application do
     # Children to start in all environments
     base_children = [
       Explorer.Repo,
+      Explorer.Repo.Replica1,
+      Explorer.Vault,
       Supervisor.child_spec({SpandexDatadog.ApiServer, datadog_opts()}, id: SpandexDatadog.ApiServer),
       Supervisor.child_spec({Task.Supervisor, name: Explorer.HistoryTaskSupervisor}, id: Explorer.HistoryTaskSupervisor),
       Supervisor.child_spec({Task.Supervisor, name: Explorer.MarketTaskSupervisor}, id: Explorer.MarketTaskSupervisor),
       Supervisor.child_spec({Task.Supervisor, name: Explorer.GenesisDataTaskSupervisor}, id: GenesisDataTaskSupervisor),
       Supervisor.child_spec({Task.Supervisor, name: Explorer.TaskSupervisor}, id: Explorer.TaskSupervisor),
+      Supervisor.child_spec({Task.Supervisor, name: Explorer.LookUpSmartContractSourcesTaskSupervisor},
+        id: LookUpSmartContractSourcesTaskSupervisor
+      ),
       Explorer.SmartContract.SolcDownloader,
+      Explorer.SmartContract.VyperDownloader,
       {Registry, keys: :duplicate, name: Registry.ChainEvents, id: Registry.ChainEvents},
       {Admin.Recovery, [[], [name: Admin.Recovery]]},
-      TransactionCount,
+      Accounts,
       AddressSum,
       AddressSumMinusBurnt,
-      BlockCount,
+      Block,
+      BlockNumber,
       Blocks,
+      GasPriceOracle,
       GasUsage,
       NetVersion,
-      BlockNumber,
+      PendingBlockOperation,
+      Transaction,
+      StateChanges,
+      Transactions,
+      TransactionsApiV2,
+      Uncles,
+      AddressesTabsCounters,
       con_cache_child_spec(MarketHistoryCache.cache_name()),
       con_cache_child_spec(RSK.cache_name(), ttl_check_interval: :timer.minutes(1), global_ttl: :timer.minutes(30)),
-      Transactions,
-      Accounts,
-      Uncles
+      {Redix, redix_opts()},
+      {Explorer.Utility.MissingRangesManipulator, []}
     ]
 
     children = base_children ++ configurable_children()
 
-    opts = [strategy: :one_for_one, name: Explorer.Supervisor]
+    opts = [strategy: :one_for_one, name: Explorer.Supervisor, max_restarts: 1_000]
 
     Supervisor.start_link(children, opts)
   end
 
   defp configurable_children do
-    [
-      configure(Explorer.ExchangeRates),
-      configure(Explorer.ChainSpec.GenesisData),
-      configure(Explorer.KnownTokens),
-      configure(Explorer.Market.History.Cataloger),
-      configure(Explorer.Chain.Cache.TokenExchangeRate),
-      configure(Explorer.Chain.Transaction.History.Historian),
-      configure(Explorer.Chain.Events.Listener),
-      configure(Explorer.Counters.AddressesWithBalanceCounter),
-      configure(Explorer.Counters.AddressesCounter),
-      configure(Explorer.Counters.AddressTransactionsCounter),
-      configure(Explorer.Counters.AddressTransactionsGasUsageCounter),
-      configure(Explorer.Counters.AddressTokenUsdSum),
-      configure(Explorer.Counters.TokenHoldersCounter),
-      configure(Explorer.Counters.TokenTransfersCounter),
-      configure(Explorer.Counters.AverageBlockTime),
-      configure(Explorer.Counters.Bridge),
-      configure(Explorer.Validator.MetadataProcessor),
-      configure(Explorer.Staking.ContractState)
-    ]
-    |> List.flatten()
+    configurable_children_set =
+      [
+        configure(Explorer.ExchangeRates),
+        configure(Explorer.ExchangeRates.TokenExchangeRates),
+        configure(Explorer.ChainSpec.GenesisData),
+        configure(Explorer.Market.History.Cataloger),
+        configure(Explorer.Chain.Cache.ContractsCounter),
+        configure(Explorer.Chain.Cache.NewContractsCounter),
+        configure(Explorer.Chain.Cache.VerifiedContractsCounter),
+        configure(Explorer.Chain.Cache.NewVerifiedContractsCounter),
+        configure(Explorer.Chain.Cache.TransactionActionTokensData),
+        configure(Explorer.Chain.Cache.TransactionActionUniswapPools),
+        configure(Explorer.Chain.Cache.WithdrawalsSum),
+        configure(Explorer.Chain.Transaction.History.Historian),
+        configure(Explorer.Chain.Events.Listener),
+        configure(Explorer.Counters.AddressesWithBalanceCounter),
+        configure(Explorer.Counters.AddressesCounter),
+        configure(Explorer.Counters.AddressTransactionsCounter),
+        configure(Explorer.Counters.AddressTokenTransfersCounter),
+        configure(Explorer.Counters.AddressTransactionsGasUsageCounter),
+        configure(Explorer.Counters.AddressTokenUsdSum),
+        configure(Explorer.Counters.TokenHoldersCounter),
+        configure(Explorer.Counters.TokenTransfersCounter),
+        configure(Explorer.Counters.BlockBurnedFeeCounter),
+        configure(Explorer.Counters.BlockPriorityFeeCounter),
+        configure(Explorer.Counters.AverageBlockTime),
+        configure(Explorer.Counters.Bridge),
+        configure(Explorer.Validator.MetadataProcessor),
+        configure(Explorer.Tags.AddressTag.Cataloger),
+        configure(MinMissingBlockNumber),
+        configure(TokenTransferTokenIdMigration.Supervisor),
+        configure(Explorer.Chain.Fetcher.CheckBytecodeMatchingOnDemand),
+        configure(Explorer.Chain.Fetcher.FetchValidatorInfoOnDemand),
+        configure(Explorer.TokenInstanceOwnerAddressMigration.Supervisor),
+        sc_microservice_configure(Explorer.Chain.Fetcher.LookUpSmartContractSourcesOnDemand),
+        configure(Explorer.Chain.Cache.RootstockLockedBTC)
+      ]
+      |> List.flatten()
+
+    repos_by_chain_type() ++ account_repo() ++ configurable_children_set
+  end
+
+  defp repos_by_chain_type do
+    if Mix.env() == :test do
+      [Explorer.Repo.PolygonEdge, Explorer.Repo.PolygonZkevm, Explorer.Repo.RSK, Explorer.Repo.Suave]
+    else
+      []
+    end
+  end
+
+  defp account_repo do
+    if System.get_env("ACCOUNT_DATABASE_URL") || Mix.env() == :test do
+      [Explorer.Repo.Account]
+    else
+      []
+    end
   end
 
   defp should_start?(process) do
@@ -106,12 +160,38 @@ defmodule Explorer.Application do
     end
   end
 
+  defp sc_microservice_configure(process) do
+    if Application.get_env(:explorer, Explorer.SmartContract.RustVerifierInterfaceBehaviour)[:eth_bytecode_db?] do
+      process
+    else
+      []
+    end
+  end
+
+  defp datadog_port do
+    Application.get_env(:explorer, :datadog)[:port]
+  end
+
+  defp spandex_batch_size do
+    Application.get_env(:explorer, :spandex)[:batch_size]
+  end
+
+  defp spandex_sync_threshold do
+    Application.get_env(:explorer, :spandex)[:sync_threshold]
+  end
+
   defp datadog_opts do
+    datadog_port = datadog_port()
+
+    spandex_batch_size = spandex_batch_size()
+
+    spandex_sync_threshold = spandex_sync_threshold()
+
     [
       host: System.get_env("DATADOG_HOST") || "localhost",
-      port: System.get_env("DATADOG_PORT") || 8126,
-      batch_size: System.get_env("SPANDEX_BATCH_SIZE") || 100,
-      sync_threshold: System.get_env("SPANDEX_SYNC_THRESHOLD") || 100,
+      port: datadog_port,
+      batch_size: spandex_batch_size,
+      sync_threshold: spandex_sync_threshold,
       http: HTTPoison
     ]
   end
@@ -126,5 +206,9 @@ defmodule Explorer.Application do
       },
       id: {ConCache, name}
     )
+  end
+
+  defp redix_opts do
+    {System.get_env("ACCOUNT_REDIS_URL") || "redis://127.0.0.1:6379", [name: :redix]}
   end
 end

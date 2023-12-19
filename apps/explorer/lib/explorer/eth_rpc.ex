@@ -1,13 +1,13 @@
 defmodule Explorer.EthRPC do
   @moduledoc """
-  Ethreum JSON RPC methods logic implementation.
+  Ethereum JSON RPC methods logic implementation.
   """
 
   alias Ecto.Type, as: EctoType
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.{Block, Data, Hash, Hash.Address, Wei}
   alias Explorer.Chain.Cache.BlockNumber
-  alias Explorer.Etherscan.Logs
+  alias Explorer.Etherscan.{Blocks, Logs, RPC}
 
   @methods %{
     "eth_blockNumber" => %{
@@ -119,7 +119,7 @@ defmodule Explorer.EthRPC do
   def eth_get_balance(address_param, block_param \\ nil) do
     with {:address, {:ok, address}} <- {:address, Chain.string_to_address_hash(address_param)},
          {:block, {:ok, block}} <- {:block, block_param(block_param)},
-         {:balance, {:ok, balance}} <- {:balance, Chain.get_balance_as_of_block(address, block)} do
+         {:balance, {:ok, balance}} <- {:balance, Blocks.get_balance_as_of_block(address, block)} do
       {:ok, Wei.hex_format(balance)}
     else
       {:address, :error} ->
@@ -262,7 +262,7 @@ defmodule Explorer.EthRPC do
   defp logs_blocks_filter(filter_options) do
     with {:filter, %{"blockHash" => block_hash_param}} <- {:filter, filter_options},
          {:block_hash, {:ok, block_hash}} <- {:block_hash, Hash.Full.cast(block_hash_param)},
-         {:block, %{number: number}} <- {:block, Repo.get(Block, block_hash)} do
+         {:block, %{number: number}} <- {:block, Repo.replica().get(Block, block_hash)} do
       {:ok, number, number}
     else
       {:filter, filters} ->
@@ -296,17 +296,14 @@ defmodule Explorer.EthRPC do
   defp paging_options(%{
          "paging_options" => %{
            "logIndex" => log_index,
-           "transactionIndex" => transaction_index,
            "blockNumber" => block_number
          }
-       })
-       when is_integer(transaction_index) do
+       }) do
     with {:ok, parsed_block_number} <- to_number(block_number, "invalid block number"),
          {:ok, parsed_log_index} <- to_number(log_index, "invalid log index") do
       {:ok,
        %{
          log_index: parsed_log_index,
-         transaction_index: transaction_index,
          block_number: parsed_block_number
        }}
     end
@@ -356,7 +353,7 @@ defmodule Explorer.EthRPC do
   defp to_number(_, error_message), do: {:error, error_message}
 
   defp max_non_consensus_block_number(max) do
-    case Chain.max_non_consensus_block_number(max) do
+    case RPC.max_non_consensus_block_number(max) do
       {:ok, number} -> number
       _ -> nil
     end

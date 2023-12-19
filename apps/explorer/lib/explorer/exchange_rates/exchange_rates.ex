@@ -1,8 +1,8 @@
 defmodule Explorer.ExchangeRates do
   @moduledoc """
-  Local cache for token exchange rates.
+  Local cache for native coin exchange rates.
 
-  Exchange rate data is updated every 10 minutes.
+  Exchange rate data is updated every 10 minutes or CACHE_EXCHANGE_RATES_PERIOD seconds.
   """
 
   use GenServer
@@ -12,7 +12,7 @@ defmodule Explorer.ExchangeRates do
   alias Explorer.Chain.Events.Publisher
   alias Explorer.ExchangeRates.{Source, Token}
 
-  @interval :timer.minutes(10)
+  @interval Application.compile_env(:explorer, __MODULE__)[:cache_period]
   @table_name :exchange_rates
 
   @impl GenServer
@@ -84,9 +84,11 @@ defmodule Explorer.ExchangeRates do
   @doc """
   Lists exchange rates for the tracked tickers.
   """
-  @spec list :: [Token.t()]
+  @spec list :: [Token.t()] | nil
   def list do
-    list_from_store(store())
+    if enabled?() do
+      list_from_store(store())
+    end
   end
 
   @doc """

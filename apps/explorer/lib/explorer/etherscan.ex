@@ -4,11 +4,13 @@ defmodule Explorer.Etherscan do
   """
 
   import Ecto.Query, only: [from: 2, where: 3, or_where: 3, union: 2, subquery: 1, order_by: 3]
+  import Explorer.Chain.SmartContract, only: [burn_address_hash_string: 0]
 
   alias Explorer.Etherscan.Logs
   alias Explorer.{Chain, Repo}
   alias Explorer.Chain.Address.{CurrentTokenBalance, TokenBalance}
-  alias Explorer.Chain.{Block, Hash, InternalTransaction, TokenTransfer, Transaction}
+  alias Explorer.Chain.{Address, Block, Hash, InternalTransaction, TokenTransfer, Transaction}
+  alias Explorer.Chain.Transaction.History.TransactionStats
 
   @default_options %{
     order_by_direction: :desc,
@@ -77,6 +79,7 @@ defmodule Explorer.Etherscan do
     created_contract_address_hash
     input
     type
+    call_type
     gas
     gas_used
     error
@@ -115,7 +118,7 @@ defmodule Explorer.Etherscan do
     |> Chain.where_transaction_has_multiple_internal_transactions()
     |> InternalTransaction.where_is_different_from_parent_transaction()
     |> InternalTransaction.where_nonpending_block()
-    |> Repo.all()
+    |> Repo.replica().all()
   end
 
   @doc """
@@ -147,8 +150,8 @@ defmodule Explorer.Etherscan do
 
     consensus_blocks =
       from(
-        b in Block,
-        where: b.consensus == true
+        block in Block,
+        where: block.consensus == true
       )
 
     if direction == nil do
@@ -198,7 +201,15 @@ defmodule Explorer.Etherscan do
       query_to_address_hash_wrapped
       |> union(^query_from_address_hash_wrapped)
       |> union(^query_created_contract_address_hash_wrapped)
-      |> Repo.all()
+      |> Chain.wrapped_union_subquery()
+      |> order_by(
+        [q],
+        [
+          {^options.order_by_direction, q.block_number},
+          desc: q.index
+        ]
+      )
+      |> Repo.replica().all()
     else
       query =
         from(
@@ -222,7 +233,7 @@ defmodule Explorer.Etherscan do
       |> where_start_block_match(options)
       |> where_end_block_match(options)
       |> InternalTransaction.where_nonpending_block()
-      |> Repo.all()
+      |> Repo.replica().all()
     end
   end
 
@@ -279,7 +290,7 @@ defmodule Explorer.Etherscan do
         }
       )
 
-    Repo.all(query)
+    Repo.replica().all(query)
   end
 
   @doc """
@@ -293,15 +304,14 @@ defmodule Explorer.Etherscan do
       ) do
     query =
       from(
-        tb in TokenBalance,
-        where: tb.token_contract_address_hash == ^contract_address_hash,
-        where: tb.address_hash == ^address_hash,
-        order_by: [desc: :block_number],
+        ctb in CurrentTokenBalance,
+        where: ctb.token_contract_address_hash == ^contract_address_hash,
+        where: ctb.address_hash == ^address_hash,
         limit: 1,
-        select: tb
+        select: ctb
       )
 
-    Repo.one(query)
+    Repo.replica().one(query)
   end
 
   @doc """
@@ -316,18 +326,18 @@ defmodule Explorer.Etherscan do
         inner_join: t in assoc(ctb, :token),
         where: ctb.address_hash == ^address_hash,
         where: ctb.value > 0,
-        distinct: :token_contract_address_hash,
         select: %{
           balance: ctb.value,
           contract_address_hash: ctb.token_contract_address_hash,
           name: t.name,
           decimals: t.decimals,
           symbol: t.symbol,
-          type: t.type
+          type: t.type,
+          id: ctb.token_id
         }
       )
 
-    Repo.all(query)
+    Repo.replica().all(query)
   end
 
   @transaction_fields ~w(
@@ -378,7 +388,7 @@ defmodule Explorer.Etherscan do
     |> where_address_match(address_hash, options)
     |> Chain.pending_transactions_query()
     |> order_by([transaction], desc: transaction.inserted_at, desc: transaction.hash)
-    |> Repo.all()
+    |> Repo.replica().all()
   end
 
   defp list_transactions(address_hash, max_block_number, options) do
@@ -402,7 +412,7 @@ defmodule Explorer.Etherscan do
     |> where_end_block_match(options)
     |> where_start_timestamp_match(options)
     |> where_end_timestamp_match(options)
-    |> Repo.all()
+    |> Repo.replica().all()
   end
 
   defp where_address_match(query, address_hash, %{filter_by: "to"}) do
@@ -428,6 +438,7 @@ defmodule Explorer.Etherscan do
     from_address_hash
     to_address_hash
     amount
+    amounts
   )a
 
   defp list_token_transfers(address_hash, contract_address_hash, block_height, options) do
@@ -442,7 +453,7 @@ defmodule Explorer.Etherscan do
         offset: ^offset(options),
         select:
           merge(map(tt, ^@token_transfer_fields), %{
-            token_id: tt.token_id,
+            token_ids: tt.token_ids,
             token_name: tkn.name,
             token_symbol: tkn.symbol,
             token_decimals: tkn.decimals,
@@ -468,6 +479,7 @@ defmodule Explorer.Etherscan do
           from_address_hash: tt.from_address_hash,
           to_address_hash: tt.to_address_hash,
           amount: tt.amount,
+          amounts: tt.amounts,
           transaction_nonce: t.nonce,
           transaction_index: t.index,
           transaction_gas: t.gas,
@@ -479,7 +491,7 @@ defmodule Explorer.Etherscan do
           block_number: b.number,
           block_timestamp: b.timestamp,
           confirmations: fragment("? - ?", ^block_height, t.block_number),
-          token_id: tt.token_id,
+          token_ids: tt.token_ids,
           token_name: tt.token_name,
           token_symbol: tt.token_symbol,
           token_decimals: tt.token_decimals,
@@ -491,7 +503,7 @@ defmodule Explorer.Etherscan do
     wrapped_query
     |> where_start_block_match(options)
     |> where_end_block_match(options)
-    |> Repo.all()
+    |> Repo.replica().all()
   end
 
   defp where_start_block_match(query, %{start_block: nil}), do: query
@@ -557,4 +569,53 @@ defmodule Explorer.Etherscan do
   """
   @spec list_logs(map()) :: [map()]
   def list_logs(filter), do: Logs.list_logs(filter)
+
+  @spec fetch_sum_coin_total_supply() :: non_neg_integer
+  def fetch_sum_coin_total_supply do
+    query =
+      from(
+        a0 in Address,
+        select: fragment("SUM(a0.fetched_coin_balance)"),
+        where: a0.fetched_coin_balance > ^0
+      )
+
+    Repo.replica().one!(query, timeout: :infinity) || 0
+  end
+
+  @spec fetch_sum_coin_total_supply_minus_burnt() :: non_neg_integer
+  def fetch_sum_coin_total_supply_minus_burnt do
+    {:ok, burn_address_hash} = Chain.string_to_address_hash(burn_address_hash_string())
+
+    query =
+      from(
+        a0 in Address,
+        select: fragment("SUM(a0.fetched_coin_balance)"),
+        where: a0.hash != ^burn_address_hash,
+        where: a0.fetched_coin_balance > ^0
+      )
+
+    Repo.replica().one!(query, timeout: :infinity) || 0
+  end
+
+  @doc """
+  It is used by `totalfees` API endpoint of `stats` module for retrieving of total fee per day
+  """
+  @spec get_total_fees_per_day(String.t()) :: {:ok, non_neg_integer() | nil} | {:error, String.t()}
+  def get_total_fees_per_day(date_string) do
+    case Date.from_iso8601(date_string) do
+      {:ok, date} ->
+        query =
+          from(
+            tx_stats in TransactionStats,
+            where: tx_stats.date == ^date,
+            select: tx_stats.total_fee
+          )
+
+        total_fees = Repo.replica().one(query)
+        {:ok, total_fees}
+
+      _ ->
+        {:error, "An incorrect input date provided. It should be in ISO 8601 format (yyyy-mm-dd)."}
+    end
+  end
 end
