@@ -1,0 +1,14 @@
+[
+  {
+    "url": "https://data.bit.diamonds/supply/maxcoins",
+    "label": "Max Supply",
+    "jsonPath": "value",
+    "icon": "flame"
+  },
+  {
+    "url": "https://data.bit.diamonds/supply/circulating",
+    "label": "Circulating Supply",
+    "jsonPath": "value",
+    "icon": "wallet"
+  }
+]

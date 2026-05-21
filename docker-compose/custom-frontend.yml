@@ -1,0 +1,12 @@
+services:
+  backend:
+    build: !reset null
+    image: ghcr.io/blockscout/blockscout:9.0.2
+    pull_policy: always
+
+  frontend:
+    build: !reset null
+    image: ghcr.io/msalman6/blockscout-frontend:dmd
+    pull_policy: always
+    volumes:
+      - ./custom-config.json:/app/public/custom-config.json:ro
