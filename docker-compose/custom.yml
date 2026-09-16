@@ -1,0 +1,66 @@
+# DMD customization of upstream docker-compose.yml.
+# docker compose --env-file .env.local -f docker-compose.yml -f custom.yml up -d
+
+services:
+
+  backend:
+    build: !reset null
+    image: ghcr.io/blockscout/blockscout:${BACKEND_DOCKER_TAG:-9.0.2}
+    pull_policy: always
+    environment:
+      ETHEREUM_JSONRPC_VARIANT:   ${ETHEREUM_JSONRPC_VARIANT:-parity}
+      ETHEREUM_JSONRPC_HTTP_URL:  ${ETHEREUM_JSONRPC_HTTP_URL:-https://rpc.bit.diamonds/rpc}
+      ETHEREUM_JSONRPC_TRACE_URL: ${ETHEREUM_JSONRPC_TRACE_URL:-https://rpc.bit.diamonds/rpctrace}
+      CHAIN_ID:  ${CHAIN_ID:-17771}
+      COIN:      ${COIN:-DMD}
+      COIN_NAME: ${COIN_NAME:-Diamond}
+
+      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: ${INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER:-true}
+      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER:  ${INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER:-false}
+      NFT_MEDIA_HANDLER_ENABLED: ${NFT_MEDIA_HANDLER_ENABLED:-false}
+
+      MARKET_NATIVE_COIN_SOURCE: ${MARKET_NATIVE_COIN_SOURCE:-coin_gecko}
+      MARKET_COINGECKO_BASE_URL: ${MARKET_COINGECKO_BASE_URL:-https://api.coingecko.com/api/v3}
+      MARKET_COINGECKO_COIN_ID:  ${MARKET_COINGECKO_COIN_ID:-diamond}
+      MARKET_COINGECKO_API_KEY:  ${MARKET_COINGECKO_API_KEY:-}
+
+      # Required on any base newer than v9.0.2: those set ECTO_SSL_MODE instead,
+      # which the 9.0.2 image ignores, so SSL defaults on and cannot reach postgres.
+      ECTO_USE_SSL: 'false'
+
+  frontend:
+    build: !reset null
+    image: ${FRONTEND_IMAGE:-ghcr.io/msalman6/blockscout-frontend:dmd}
+    pull_policy: ${FRONTEND_PULL_POLICY:-missing}
+    volumes:
+      - ./custom-config.json:/app/public/custom-config.json:ro
+    environment:
+      NEXT_PUBLIC_NETWORK_NAME:              ${NEXT_PUBLIC_NETWORK_NAME:-DMD Diamond}
+      NEXT_PUBLIC_NETWORK_SHORT_NAME:        ${NEXT_PUBLIC_NETWORK_SHORT_NAME:-DMD}
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME:     ${NEXT_PUBLIC_NETWORK_CURRENCY_NAME:-DMD}
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL:   ${NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL:-DMD}
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: ${NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS:-18}
+      NEXT_PUBLIC_IS_TESTNET:                ${NEXT_PUBLIC_IS_TESTNET:-false}
+
+      NEXT_PUBLIC_API_PROTOCOL:            ${NEXT_PUBLIC_API_PROTOCOL:-https}
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL:  ${NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL:-wss}
+      NEXT_PUBLIC_API_HOST:                ${NEXT_PUBLIC_API_HOST:-explorer.bit.diamonds}
+      NEXT_PUBLIC_APP_HOST:                ${NEXT_PUBLIC_APP_HOST:-explorer.bit.diamonds}
+      NEXT_PUBLIC_STATS_API_HOST:          ${NEXT_PUBLIC_STATS_API_HOST:-http://localhost:8080}
+      NEXT_PUBLIC_VISUALIZE_API_HOST:      ${NEXT_PUBLIC_VISUALIZE_API_HOST:-https://explorer.bit.diamonds/}
+      NEXT_PUBLIC_VISUALIZE_API_BASE_PATH: ${NEXT_PUBLIC_VISUALIZE_API_BASE_PATH:-/visualize}
+
+      NEXT_PUBLIC_NETWORK_LOGO: ${NEXT_PUBLIC_NETWORK_LOGO:-https://bit.diamonds/wp-content/uploads/2022/02/logo_dmd_full.svg}
+      NEXT_PUBLIC_NETWORK_ICON: ${NEXT_PUBLIC_NETWORK_ICON:-https://bit.diamonds/wp-content/uploads/2022/02/cropped-favicon-32x32.png}
+
+      NEXT_PUBLIC_HOMEPAGE_CHARTS:    ${NEXT_PUBLIC_HOMEPAGE_CHARTS:-['coin_price','market_cap']}
+      NEXT_PUBLIC_HOMEPAGE_STATS:     ${NEXT_PUBLIC_HOMEPAGE_STATS:-['total_blocks','total_txs']}
+      NEXT_PUBLIC_AD_BANNER_PROVIDER: ${NEXT_PUBLIC_AD_BANNER_PROVIDER:-none}
+      NEXT_PUBLIC_AD_TEXT_PROVIDER:   ${NEXT_PUBLIC_AD_TEXT_PROVIDER:-none}
+
+      # Required: deprecated in frontend v2.7.0+, fails the startup env check if set.
+      NEXT_PUBLIC_API_SPEC_URL:
+
+  # Required: upstream's definition builds from source; NFT handling is disabled anyway.
+  nft_media_handler:
+    profiles: [ "nft-media-handler" ]
