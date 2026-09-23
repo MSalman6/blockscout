@@ -9,6 +9,20 @@ set -eu
 : "${DMD_GRAPH_NETWORK:=dmd}"
 : "${DMD_SUBGRAPH_NAME:=dmd-subgraph}"
 
+if ! touch ./.write-test 2>/dev/null; then
+  echo "ERROR: cannot write to the subgraph directory as uid $(id -u):$(id -g)." >&2
+  echo >&2
+  echo "  The directory is owned by $(stat -c '%u:%g' . 2>/dev/null || echo '?')." >&2
+  echo "  Set HOST_UID / HOST_GID in .env.local to YOUR ids and re-run:" >&2
+  echo "      id -u   # -> HOST_UID" >&2
+  echo "      id -g   # -> HOST_GID" >&2
+  echo >&2
+  echo "  If the tree is owned by root (a previous run as root), reclaim it:" >&2
+  echo "      sudo chown -R \$(id -u):\$(id -g) <path>/dmd-subgraph" >&2
+  exit 1
+fi
+rm -f ./.write-test
+
 echo "==> regenerating networks.json from environment"
 sh ./scripts/gen-networks.sh
 
