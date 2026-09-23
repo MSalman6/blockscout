@@ -1,0 +1,199 @@
+services:
+
+  graph-postgres:
+    image: postgres:16.1
+    container_name: graph-postgres
+    restart: unless-stopped
+    command:
+      [ "postgres", "-cshared_preload_libraries=pg_stat_statements", "-cmax_connections=200" ]
+    environment:
+      POSTGRES_USER: ${GRAPH_POSTGRES_USER:-graph-node}
+      POSTGRES_PASSWORD: ${GRAPH_POSTGRES_PASSWORD:?set GRAPH_POSTGRES_PASSWORD in .env.local}
+      POSTGRES_DB: ${GRAPH_POSTGRES_DB:-graph-node}
+      PGDATA: /var/lib/postgresql/data
+      POSTGRES_INITDB_ARGS: "-E UTF8 --locale=C"
+    volumes:
+      - graph-postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: [ "CMD-SHELL", "pg_isready -U ${GRAPH_POSTGRES_USER:-graph-node}" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  ipfs:
+    image: ipfs/kubo:v0.14.0
+    container_name: graph-ipfs
+    restart: unless-stopped
+    command: [ "daemon", "--migrate=true", "--offline" ]
+    environment:
+      IPFS_PROFILE: server
+    volumes:
+      - graph-ipfs-data:/data/ipfs
+
+  # diamond-node does not expose the `net` JSON-RPC namespace, which graph-node
+  # needs for net_version. This answers net_* locally (from eth_chainId) and
+  # forwards everything else upstream.
+  rpc-shim:
+    image: node:22-alpine
+    container_name: rpc-shim
+    restart: unless-stopped
+    command: [ "node", "/app/server.js" ]
+    read_only: true
+    user: "1000:1000"
+    security_opt: [ "no-new-privileges:true" ]
+    cap_drop: [ ALL ]
+    environment:
+      UPSTREAM_RPC_URL: ${DMD_UPSTREAM_RPC_URL:?set DMD_UPSTREAM_RPC_URL in .env.local}
+      PORT: "8545"
+    volumes:
+      - ./rpc-shim-server.js:/app/server.js:ro
+    healthcheck:
+      test: [ "CMD", "wget", "-qO-", "http://127.0.0.1:8545/health" ]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  graph-node:
+    image: graphprotocol/graph-node:v0.34.1
+    container_name: graph-node
+    restart: unless-stopped
+    depends_on:
+      graph-postgres:
+        condition: service_healthy
+      ipfs:
+        condition: service_started
+      rpc-shim:
+        condition: service_healthy
+    environment:
+      postgres_host: graph-postgres
+      postgres_user: ${GRAPH_POSTGRES_USER:-graph-node}
+      postgres_pass: ${GRAPH_POSTGRES_PASSWORD:?}
+      postgres_db:   ${GRAPH_POSTGRES_DB:-graph-node}
+      ipfs: "ipfs:5001"
+      GRAPH_NODE_CONFIG: /root/config.toml
+      GRAPH_LOG: ${GRAPH_LOG:-info}
+      ETHEREUM_REORG_THRESHOLD: ${ETHEREUM_REORG_THRESHOLD:-16}
+      ETHEREUM_ANCESTOR_COUNT:  ${ETHEREUM_ANCESTOR_COUNT:-16}
+      DMD_GRAPH_RPC_URL:       ${DMD_GRAPH_RPC_URL:-http://rpc-shim:8545}
+      GRAPH_POSTGRES_USER:     ${GRAPH_POSTGRES_USER:-graph-node}
+      GRAPH_POSTGRES_PASSWORD: ${GRAPH_POSTGRES_PASSWORD:?}
+      GRAPH_POSTGRES_DB:       ${GRAPH_POSTGRES_DB:-graph-node}
+    volumes:
+      - ./graph-node-config.toml:/root/config.toml:ro
+
+  bens-config-init:
+    image: busybox:1.36
+    container_name: bens-config-init
+    restart: "no"
+    volumes:
+      - bens-config:/rendered
+    command:
+      - sh
+      - -c
+      - |
+        cat > /rendered/bens-config.json <<'JSON'
+        {
+          "subgraphs_reader": {
+            "networks": {
+              "${DMD_CHAIN_ID:?set DMD_CHAIN_ID in .env.local}": {
+                "blockscout": { "url": "${DMD_EXPLORER_URL:?set DMD_EXPLORER_URL in .env.local}" },
+                "use_protocols": [ "${DMD_PROTOCOL_SLUG:-dmd}" ],
+                "rpc_url": "${DMD_UPSTREAM_RPC_URL:?}"
+              }
+            },
+            "protocols": {
+              "${DMD_PROTOCOL_SLUG:-dmd}": {
+                "disabled": false,
+                "network_id": ${DMD_CHAIN_ID:?},
+                "tld_list": [ "${DMD_TLD:-dmd}" ],
+                "subgraph_name": "${DMD_SUBGRAPH_NAME:-dmd-subgraph}",
+                "address_resolve_technique": "${DMD_ADDRESS_RESOLVE_TECHNIQUE:-reverse_registry}",
+                "meta": {
+                  "short_name": "${DMD_PROTOCOL_SHORT_NAME:-DMD Names}",
+                  "title": "${DMD_PROTOCOL_TITLE:-DMD Naming System}",
+                  "description": "${DMD_PROTOCOL_DESCRIPTION:-Naming system for the DMD Diamond chain.}",
+                  "docs_url": "${DMD_PROTOCOL_DOCS_URL:-https://github.com/DMDcoin/diamond-contracts-registry}"
+                },
+                "specific": {
+                  "type": "ens_like",
+                  "registry_contract": "${DMD_REGISTRY_ADDRESS:?set DMD_REGISTRY_ADDRESS in .env.local}",
+                  "native_token_contract": "${DMD_NAMES_ADDRESS:?set DMD_NAMES_ADDRESS in .env.local}",
+                  "try_offchain_resolve": false
+                }
+              }
+            }
+          }
+        }
+        JSON
+        cat /rendered/bens-config.json
+
+  bens-server:
+    image: ghcr.io/blockscout/bens:${BENS_DOCKER_TAG:-v1.7.5}
+    container_name: bens-server
+    restart: unless-stopped
+    depends_on:
+      graph-postgres:
+        condition: service_healthy
+      bens-config-init:
+        condition: service_completed_successfully
+    security_opt: [ "no-new-privileges:true" ]
+    # nginx proxies the BENS vhost here. Loopback only.
+    ports:
+      - "127.0.0.1:${BENS_HOST_PORT:-17004}:8050"
+    environment:
+      BENS__DATABASE__CONNECT__URL: postgresql://${GRAPH_POSTGRES_USER:-graph-node}:${GRAPH_POSTGRES_PASSWORD:?}@graph-postgres:5432/${GRAPH_POSTGRES_DB:-graph-node}?sslmode=disable
+      BENS__CONFIG: /rendered/bens-config.json
+      BENS__SERVER__HTTP__ADDR: 0.0.0.0:8050
+      BENS__SERVER__GRPC__ENABLED: "false"
+      BENS__TRACING__FORMAT: default
+      BENS__METRICS__ENABLED: "false"
+      BENS__SERVER__HTTP__CORS__ENABLED: "true"
+      BENS__SERVER__HTTP__CORS__ALLOWED_ORIGIN: ${BENS_CORS_ORIGIN:?set BENS_CORS_ORIGIN in .env.local}
+      BENS__SERVER__HTTP__CORS__ALLOWED_METHODS: "GET, OPTIONS"
+      BENS__SERVER__HTTP__CORS__ALLOWED_CREDENTIALS: "false"
+    volumes:
+      - bens-config:/rendered:ro
+
+  #   docker compose --env-file .env.local --profile deploy run --rm subgraph-deployer
+  subgraph-deployer:
+    image: node:22-alpine
+    profiles: [ "deploy" ]
+    # `graph build --network` rewrites subgraph.yaml in the mounted tree and npm
+    # writes node_modules there. Run as the host user, not root.
+    user: "${HOST_UID:-1000}:${HOST_GID:-1000}"
+    depends_on:
+      - graph-node
+      - ipfs
+    working_dir: /subgraph
+    environment:
+      npm_config_cache: /tmp/.npm
+      GRAPH_NODE_ADMIN: http://graph-node:8020
+      GRAPH_IPFS: http://ipfs:5001
+      DMD_GRAPH_NETWORK: ${DMD_GRAPH_NETWORK:-dmd}
+      DMD_SUBGRAPH_NAME: ${DMD_SUBGRAPH_NAME:-dmd-subgraph}
+      DMD_REGISTRY_ADDRESS:       ${DMD_REGISTRY_ADDRESS:?}
+      DMD_REGISTRY_START_BLOCK:   ${DMD_REGISTRY_START_BLOCK:?}
+      DMD_NAMES_ADDRESS:          ${DMD_NAMES_ADDRESS:?}
+      DMD_NAMES_START_BLOCK:      ${DMD_NAMES_START_BLOCK:?}
+      DMD_RESOLVER_ADDRESS:       ${DMD_RESOLVER_ADDRESS:?}
+      DMD_RESOLVER_START_BLOCK:   ${DMD_RESOLVER_START_BLOCK:?}
+      DMD_CONTROLLER_ADDRESS:     ${DMD_CONTROLLER_ADDRESS:?}
+      DMD_CONTROLLER_START_BLOCK: ${DMD_CONTROLLER_START_BLOCK:?}
+    volumes:
+      - ${DMD_SUBGRAPH_PATH:-./dmd-subgraph}:/subgraph
+    command: [ "sh", "./scripts/deploy.sh" ]
+
+  backend:
+    environment:
+      MICROSERVICE_BENS_ENABLED: "true"
+      MICROSERVICE_BENS_URL: http://bens-server:8050/
+
+  frontend:
+    environment:
+      NEXT_PUBLIC_NAME_SERVICE_API_HOST: ${NEXT_PUBLIC_NAME_SERVICE_API_HOST:?set NEXT_PUBLIC_NAME_SERVICE_API_HOST in .env.local}
+      NEXT_PUBLIC_NAME_SERVICE_PROTOCOLS: ${NEXT_PUBLIC_NAME_SERVICE_PROTOCOLS:-['dmd']}
+
+volumes:
+  graph-postgres-data:
+  graph-ipfs-data:
+  bens-config:

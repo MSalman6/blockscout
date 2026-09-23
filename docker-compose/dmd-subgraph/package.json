@@ -1,0 +1,15 @@
+{
+  "name": "dmd-subgraph",
+  "version": "1.0.0",
+  "license": "MIT",
+  "scripts": {
+    "codegen": "graph codegen --output-dir src/types/",
+    "build": "graph build",
+    "create-local": "graph create --node http://127.0.0.1:8020 dmd-subgraph",
+    "deploy-local": "graph deploy --node http://127.0.0.1:8020 --ipfs http://127.0.0.1:5001 --network dmd --version-label 0.0.1 dmd-subgraph"
+  },
+  "devDependencies": {
+    "@graphprotocol/graph-cli": "0.71.2",
+    "@graphprotocol/graph-ts": "0.35.1"
+  }
+}

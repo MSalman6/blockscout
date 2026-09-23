@@ -1,0 +1,115 @@
+specVersion: 0.0.4
+description: DMD Naming System (.dmd) — ENS-compatible registry on DMD Diamond (chain 17771)
+repository: https://github.com/DMDcoin/diamond-contracts-registry
+schema:
+  file: ./schema.graphql
+dataSources:
+  - kind: ethereum/contract
+    name: DMDRegistry
+    network: dmd
+    source:
+      abi: DMDRegistry
+      address: "0x8AA91989f67e186ce28BfE293bC336b46f6e4fE7"
+      startBlock: 222455
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      file: ./src/dmdRegistry.ts
+      entities:
+        - Domain
+        - Account
+        - Resolver
+      abis:
+        - name: DMDRegistry
+          file: ./abis/DMDRegistry.json
+      eventHandlers:
+        - event: NewOwner(indexed bytes32,indexed bytes32,address)
+          handler: handleNewOwner
+        - event: NewResolver(indexed bytes32,address)
+          handler: handleNewResolver
+        - event: NewTTL(indexed bytes32,uint64)
+          handler: handleNewTTL
+        - event: Transfer(indexed bytes32,address)
+          handler: handleTransfer
+  - kind: ethereum/contract
+    name: DMDResolver
+    network: dmd
+    source:
+      abi: DMDResolver
+      address: "0x2C8a0437457da46115484F9DbE7b6966444519D2"
+      startBlock: 222460
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      file: ./src/dmdResolver.ts
+      entities:
+        - Domain
+        - Account
+        - Resolver
+        - AddrChanged
+        - NameChanged
+      abis:
+        - name: DMDResolver
+          file: ./abis/DMDResolver.json
+      eventHandlers:
+        - event: AddrChanged(indexed bytes32,address)
+          handler: handleAddrChanged
+        - event: NameChanged(indexed bytes32,string)
+          handler: handleNameChanged
+  - kind: ethereum/contract
+    name: DMDNames
+    network: dmd
+    source:
+      abi: DMDNames
+      address: "0xcba1D8a3b237f2E43B949aE0dfA2e46341823F10"
+      startBlock: 222458
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      file: ./src/dmdNames.ts
+      entities:
+        - Domain
+        - Account
+        - Registration
+        - NameTransferred
+      abis:
+        - name: DMDNames
+          file: ./abis/DMDNames.json
+      eventHandlers:
+        - event: Transfer(indexed address,indexed address,indexed uint256)
+          handler: handleNameTransferred
+        - event: Renew(indexed uint256,indexed uint256)
+          handler: handleRenew
+  - kind: ethereum/contract
+    name: DMDRegistrarController
+    network: dmd
+    source:
+      abi: DMDRegistrarController
+      address: "0x04847f99aD1312aFFB1cc6A03a53FEB5fEdd282B"
+      startBlock: 222462
+    mapping:
+      kind: ethereum/events
+      apiVersion: 0.0.6
+      language: wasm/assemblyscript
+      file: ./src/dmdController.ts
+      entities:
+        - Domain
+        - Account
+        - Registration
+        - NameRegistered
+        - NameRenewed
+      abis:
+        - name: DMDRegistrarController
+          file: ./abis/DMDRegistrarController.json
+      eventHandlers:
+        - event: NameRegistered(indexed address,indexed bytes32,indexed uint256,string)
+          handler: handleNameRegistered
+        - event: NameRenewed(indexed address,indexed bytes32,indexed uint256,string)
+          handler: handleNameRenewed
+        - event: NameActivated(indexed address,indexed bytes32,string)
+          handler: handleNameActivated
+        - event: NameDeactivated(indexed address,indexed bytes32,string)
+          handler: handleNameDeactivated

@@ -61,6 +61,18 @@ services:
       # Required: deprecated in frontend v2.7.0+, fails the startup env check if set.
       NEXT_PUBLIC_API_SPEC_URL:
 
+  db:
+    ports: !reset []
+
+  stats-db:
+    ports: !reset []
+
+  proxy:
+    ports: !override
+      - "127.0.0.1:80:80"
+      - "127.0.0.1:8080:8080"
+      - "127.0.0.1:8081:8081"
+
   # Required: upstream's definition builds from source; NFT handling is disabled anyway.
   nft_media_handler:
     profiles: [ "nft-media-handler" ]

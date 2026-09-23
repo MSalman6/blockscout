@@ -1,0 +1,22 @@
+# graph-node chain and store configuration.
+[general]
+
+[store]
+[store.primary]
+connection = "postgresql://${GRAPH_POSTGRES_USER}:${GRAPH_POSTGRES_PASSWORD}@graph-postgres:5432/${GRAPH_POSTGRES_DB}"
+weight = 1
+pool_size = 20
+
+[deployment]
+[[deployment.rule]]
+shard = "primary"
+indexers = ["default"]
+
+[chains]
+ingestor = "block_ingestor_node"
+
+[chains.dmd]
+shard = "primary"
+provider = [
+    { label = "dmd", url = "${DMD_GRAPH_RPC_URL}", features = [] }
+]

@@ -1,0 +1,184 @@
+services:
+
+  redis-db:
+    extends:
+      file: ./services/redis.yml
+      service: redis-db
+
+  db-init:
+    extends:
+      file: ./services/db.yml
+      service: db-init
+
+  db:
+    depends_on:
+      db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/db.yml
+      service: db
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-blockscout}
+      POSTGRES_USER: ${POSTGRES_USER:-blockscout}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env.local}
+    # Upstream publishes 7432 on 0.0.0.0. Never expose this.
+    ports: !reset []
+
+  backend:
+    depends_on:
+      - db
+      - redis-db
+    extends:
+      file: ./services/backend.yml
+      service: backend
+    build:
+      context: ..
+      dockerfile: ./docker/Dockerfile
+      args:
+        RELEASE_VERSION: ${RELEASE_VERSION:?set RELEASE_VERSION in .env.local}
+    links:
+      - db:database
+    ports:
+      - "127.0.0.1:17003:4000"
+    environment:
+      ETHEREUM_JSONRPC_VARIANT: 'parity'
+      ETHEREUM_JSONRPC_HTTP_URL:  ${ETHEREUM_JSONRPC_HTTP_URL:?}
+      ETHEREUM_JSONRPC_TRACE_URL: ${ETHEREUM_JSONRPC_TRACE_URL:?}
+      ETHEREUM_JSONRPC_WS_URL:    ${ETHEREUM_JSONRPC_WS_URL:-}
+      CHAIN_ID: ${DMD_CHAIN_ID:?}
+      CHAIN_SPEC_PATH: ${CHAIN_SPEC_PATH:-https://raw.githubusercontent.com/DMDcoin/Diamond/refs/heads/main/spec.json}
+
+      DATABASE_URL: postgresql://${POSTGRES_USER:-blockscout}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:-blockscout}
+
+      ECTO_SSL_MODE: ${ECTO_SSL_MODE:-disable}
+
+      COIN:      ${COIN:-DIAMOND}
+      COIN_NAME: ${COIN_NAME:-DIAMOND}
+      SHOW_TESTNET_LABEL: 'false'
+      TESTNET_LABEL_TEXT: ''
+
+      INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER: ${INDEXER_DISABLE_INTERNAL_TRANSACTIONS_FETCHER:-false}
+      INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER:  ${INDEXER_DISABLE_PENDING_TRANSACTIONS_FETCHER:-false}
+      INDEXER_DISABLE_BLOCK_REWARD_FETCHER: 'true'
+
+      DISABLE_MARKET: 'false'
+      MARKET_NATIVE_COIN_SOURCE:         'coin_gecko'
+      MARKET_NATIVE_COIN_HISTORY_SOURCE: 'coin_gecko'
+      MARKET_COINGECKO_COIN_ID: ${MARKET_COINGECKO_COIN_ID:-diamond}
+      MARKET_COINGECKO_API_KEY: ${MARKET_COINGECKO_API_KEY:-}
+      MARKET_COIN_FETCHER_ENABLED:    'true'
+      MARKET_HISTORY_FETCHER_ENABLED: 'true'
+
+      NFT_MEDIA_HANDLER_ENABLED: 'false'
+      MICROSERVICE_ACCOUNT_ABSTRACTION_ENABLED: 'false'
+      MICROSERVICE_SC_VERIFIER_ENABLED: 'true'
+      MICROSERVICE_SC_VERIFIER_URL: 'https://eth-bytecode-db.services.blockscout.com/'
+      MICROSERVICE_SC_VERIFIER_TYPE: 'eth_bytecode_db'
+
+      IPFS_GATEWAY_URL: ${IPFS_GATEWAY_URL:-http://host.docker.internal:5000}
+      STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED: 'false'
+
+  visualizer:
+    extends:
+      file: ./services/visualizer.yml
+      service: visualizer
+    ports:
+      - "127.0.0.1:17002:8050"
+
+  sig-provider:
+    extends:
+      file: ./services/sig-provider.yml
+      service: sig-provider
+
+  frontend:
+    depends_on:
+      - backend
+    extends:
+      file: ./services/frontend.yml
+      service: frontend
+    ports:
+      - "127.0.0.1:17000:3000"
+    environment:
+      NEXT_PUBLIC_NETWORK_NAME:              ${NEXT_PUBLIC_NETWORK_NAME:-DMD Diamond}
+      NEXT_PUBLIC_NETWORK_SHORT_NAME:        ${NEXT_PUBLIC_NETWORK_SHORT_NAME:-DMD}
+      NEXT_PUBLIC_NETWORK_CURRENCY_NAME:     'DMD'
+      NEXT_PUBLIC_NETWORK_CURRENCY_SYMBOL:   'DMD'
+      NEXT_PUBLIC_NETWORK_CURRENCY_DECIMALS: '18'
+      NEXT_PUBLIC_NETWORK_ID:                ${DMD_CHAIN_ID:?}
+      NEXT_PUBLIC_NETWORK_RPC_URL:           ${NEXT_PUBLIC_NETWORK_RPC_URL:-https://rpc.bit.diamonds/}
+
+      NEXT_PUBLIC_API_PROTOCOL:           'https'
+      NEXT_PUBLIC_API_WEBSOCKET_PROTOCOL: 'wss'
+      NEXT_PUBLIC_APP_HOST: ${EXPLORER_HOST:?}
+      NEXT_PUBLIC_API_HOST: ${EXPLORER_HOST:?}
+
+      NEXT_PUBLIC_STATS_API_HOST:          https://${EXPLORER_HOST:?}
+      NEXT_PUBLIC_STATS_API_BASE_PATH:     ${STATS_BASE_PATH:-/bsstats}
+      NEXT_PUBLIC_VISUALIZE_API_HOST:      https://${EXPLORER_HOST:?}
+      NEXT_PUBLIC_VISUALIZE_API_BASE_PATH: ${VISUALIZE_BASE_PATH:-/bsvisualize}
+
+      NEXT_PUBLIC_NETWORK_LOGO: 'https://bit.diamonds/wp-content/uploads/2022/02/logo_dmd_full.svg'
+      NEXT_PUBLIC_NETWORK_ICON: 'https://bit.diamonds/wp-content/uploads/2022/02/cropped-favicon-32x32.png'
+      NEXT_PUBLIC_HOMEPAGE_CHARTS: "['coin_price','market_cap']"
+      NEXT_PUBLIC_HOMEPAGE_STATS: "['total_blocks','total_txs','wallet_addresses','current_epoch','gas_tracker','latest_l1_state_batch','latest_batch']"
+      NEXT_PUBLIC_AD_BANNER_PROVIDER: 'none'
+      NEXT_PUBLIC_AD_TEXT_PROVIDER:   'none'
+      NEXT_PUBLIC_IS_TESTNET:   ${NEXT_PUBLIC_IS_TESTNET:-false}
+      NEXT_PUBLIC_HAS_USER_OPS: 'false'
+      NEXT_PUBLIC_NETWORK_VERIFICATION_TYPE: 'validation'
+      NEXT_PUBLIC_GAS_TRACKER_ENABLED: 'false'
+      NEXT_PUBLIC_GAS_TRACKER_UNITS: "['gwei']"
+      NEXT_PUBLIC_WEB3_WALLETS: "['metamask']"
+      NEXT_PUBLIC_WEB3_DISABLE_ADD_TOKEN_TO_WALLET: 'false'
+      NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID: ${NEXT_PUBLIC_WALLET_CONNECT_PROJECT_ID:-}
+
+  stats-db-init:
+    extends:
+      file: ./services/stats.yml
+      service: stats-db-init
+
+  stats-db:
+    depends_on:
+      stats-db-init:
+        condition: service_completed_successfully
+    extends:
+      file: ./services/stats.yml
+      service: stats-db
+    environment:
+      POSTGRES_DB:   ${STATS_POSTGRES_DB:-stats}
+      POSTGRES_USER: ${STATS_POSTGRES_USER:-stats}
+      POSTGRES_PASSWORD: ${STATS_POSTGRES_PASSWORD:?set STATS_POSTGRES_PASSWORD in .env.local}
+    # Upstream publishes 7433 on 0.0.0.0. Never expose this.
+    ports: !reset []
+
+  stats:
+    depends_on:
+      - stats-db
+      - backend
+    extends:
+      file: ./services/stats.yml
+      service: stats
+    ports:
+      - "127.0.0.1:17001:8050"
+    environment:
+      STATS__CONDITIONAL_START__USER_OPS_PAST_INDEXING_FINISHED__ENABLED: 'false'
+      STATS__BLOCKSCOUT_API_URL: https://${EXPLORER_HOST:?}
+      STATS__DB_URL:            postgres://${STATS_POSTGRES_USER:-stats}:${STATS_POSTGRES_PASSWORD:?}@stats-db:5432/${STATS_POSTGRES_DB:-stats}
+      STATS__BLOCKSCOUT_DB_URL: postgresql://${POSTGRES_USER:-blockscout}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:-blockscout}
+      # Served same-origin under /bsstats, so no cross-origin requests happen.
+      STATS__SERVER__HTTP__CORS__ENABLED: 'false'
+
+  pgadmin:
+    image: dpage/pgadmin4
+    profiles: [ "admin" ]
+    restart: unless-stopped
+    depends_on:
+      - db
+      - stats-db
+    environment:
+      PGADMIN_DEFAULT_EMAIL:    ${PGADMIN_EMAIL:?set PGADMIN_EMAIL in .env.local}
+      PGADMIN_DEFAULT_PASSWORD: ${PGADMIN_PASSWORD:?set PGADMIN_PASSWORD in .env.local}
+    volumes:
+      - ./mounted_configs/pgadmin4/servers.json:/pgadmin4/servers.json:ro
+    ports:
+      - "127.0.0.1:5050:80"
