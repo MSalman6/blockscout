@@ -51,6 +51,7 @@ services:
       DATABASE_URL: postgresql://${POSTGRES_USER:-blockscout}:${POSTGRES_PASSWORD:?}@db:5432/${POSTGRES_DB:-blockscout}
 
       ECTO_SSL_MODE: ${ECTO_SSL_MODE:-disable}
+      ECTO_USE_SSL: ${ECTO_USE_SSL:-false}
 
       COIN:      ${COIN:-DIAMOND}
       COIN_NAME: ${COIN_NAME:-DIAMOND}
